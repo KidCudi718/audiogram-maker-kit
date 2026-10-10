@@ -1,14 +1,20 @@
-"""Per frame compositor: audio reactive ring, breathing photo, drifting bloom, karaoke captions, payoff push in, progress bar.
+"""Per frame compositor: audio reactive ring, breathing photo, drifting bloom, karaoke captions, payoff takeover, progress bar.
 Rules baked in (do not change without the user asking):
   * No hook or intro. Frame 0 is the full design (background, photo, ring, top bar, footer, name chip, first caption line)
     and the audio starts at frame 0. No fade in, no silent lead in, no crossfade.
   * No fade out. The last word plays in full and the video cuts cleanly.
   * Sharp and vivid: ring bars drawn at 2x then Lanczos downscaled with a tight 1.2px halo, photo scaled from a 2x render,
-    solid footer (no frosted blur), payoff uses a solid scrim (no blur), grain 1.0 as dither only, vignette on the scene only.
+    solid footer (no frosted blur), grain 1.0 as dither only, vignette on the scene only.
   * Colour: real RGB to BT.709 conversion in swscale plus bt709 / tv tags so players decode with the right matrix.
+  * First caption word is lit from frame 0. Upcoming words are quieter but stay readable (3.4:1 or more).
+  * Payoff takeover: the speaker photo, ring, glow, name chip, last caption and watermark fade fully to 0 in the 0.35 s
+    before the payoff (never while a caption word is still lit), then the payoff line fades in 0.05 s after its first
+    word starts, on a clean background with nothing behind it.
   * Export: 1920x1080 30 fps, x264 preset slow, CRF 12, tune film, deblock -1,-1, aq-strength 0.8, yuv420p, AAC 320k 48 kHz,
-    +faststart. Audio is the mastered WAV (-14 LUFS / -1 dBTP)."""
+    +faststart. Audio is the mastered WAV (-14 LUFS / -1 dBTP).
+  * Speed: frames are drawn by several worker processes in parallel and fed to x264 in order. Same pixels, faster."""
 import os, json, math, subprocess
+from collections import deque
 import numpy as np
 from PIL import Image, ImageDraw, ImageFilter, ImageChops
 from .theme import rgb
@@ -27,7 +33,24 @@ def levels(n, seed=11):
         out.append(max(0.06, min(1.0, v * random.uniform(0.55, 1.15))))
     return out
 
-def render(clip_dir, source_audio, master_wav, outf, t0=0.0, t1=None, dump=None, crf=12, threads=6, log=print):
+_PRODUCE = None
+def _work(F): return _PRODUCE(F)
+
+# Payoff takeover: the speaker (photo, ring, glow), name chip, last caption and watermark fade fully to 0 BEFORE the
+# payoff text starts; the payoff then fades in on a clean background with nothing behind it.
+SPK_LEAD = 0.35; SPK_FADE = 0.30; HERO_TEXT_DELAY = 0.05; HERO_TEXT_FADE = 0.30
+
+def payoff_timing(TLJ):
+    """(fade_start, fade_end, text_start). The fade never starts before the previous word has finished, and it
+    always ends before the payoff text begins."""
+    HS = TLJ["hero_start"]
+    prev_end = max([e["e"] for e in TLJ["timeline"] if not e["hero"] and e["cur"] is not None and e["s"] < HS] or [0.0])
+    fs = max(HS - SPK_LEAD, min(prev_end, HS - 0.17)); fs = max(0.0, fs)
+    fe = min(fs + SPK_FADE, HS + HERO_TEXT_DELAY - 1 / 30)
+    ts = round(HS + HERO_TEXT_DELAY, 3)
+    return round(fs, 3), min(round(fe, 3), math.floor((ts - 1 / 30) * 1000) / 1000), ts   # rounding never lets the fade end late
+
+def render(clip_dir, source_audio, master_wav, outf, t0=0.0, t1=None, dump=None, crf=12, threads=0, workers=None, log=print):
     TLJ = json.load(open(os.path.join(clip_dir, "timeline.json"))); G = TLJ["geometry"]; TL = TLJ["timeline"]; PAL = TLJ["palette"]
     ST, DUR = TLJ["start"], TLJ["dur"]; TURNS = [tuple(x) for x in TLJ["turns"]]; SPK = TLJ["speakers"]
     LY = os.path.join(clip_dir, "layers"); LIGHT = TLJ["theme"] == "light"
@@ -74,6 +97,7 @@ def render(clip_dir, source_audio, master_wav, outf, t0=0.0, t1=None, dump=None,
     # ---------- layers ----------
     load = lambda nm: Image.open(os.path.join(LY, nm))
     BG = load("bg.png").convert("RGB")
+    BGC = load("bg_clean.png").convert("RGB") if os.path.exists(os.path.join(clip_dir, "layers", "bg_clean.png")) else BG   # payoff: no watermark
     BLOOM_S = load("bloom.png").convert("RGBA").resize((Wd // 2, Ht // 2), Image.LANCZOS)
     PB = (cx - 340, cy - 340, cx + 340, cy + 420)
     PFP = {s: load(f"pfp_{s}.png").convert("RGBA").crop(PB) for s in SPK}
@@ -108,29 +132,28 @@ def render(clip_dir, source_audio, master_wav, outf, t0=0.0, t1=None, dump=None,
         return TL[-1] if t >= TL[-1]["s"] else None
     def last_state_of(i):
         es = [e for e in TL if e["phrase"] == i]; return es[-1] if es else None
+    FS, FE, TS = payoff_timing(TLJ) if TLJ.get("hero_phrase") else (DUR + 1, DUR + 2, DUR + 3)
+    def spk_alpha(t): return 1.0 if t <= FS else max(0.0, 1 - ease((t - FS) / max(1e-3, FE - FS)))
     def scene(t, f, spk):
-        fr = BG.copy().convert("RGBA"); fr.alpha_composite(bloom(t))
+        k = spk_alpha(t)
+        if k <= 0.003: return BGC.copy().convert("RGBA")          # nothing behind the payoff, not even the watermark
+        base = BG if k >= 0.999 else Image.blend(BGC, BG, k)
+        fr = base.copy().convert("RGBA"); sp = fr if k >= 0.999 else Image.new("RGBA", (Wd, Ht), (0, 0, 0, 0))
+        sp.alpha_composite(bloom(t))
         sc = 1 + 0.03 * L[f]; pw, ph = PFP[spk].size; pim = PFP2[spk].resize((round(pw * sc), round(ph * sc)), Image.LANCZOS)
-        ox = round(cx - (cx - PB[0]) * sc); oy = round(cy - (cy - PB[1]) * sc); fr.alpha_composite(pim, (ox, oy))
-        fr.alpha_composite(ring(f), (cx - EXT, cy - EXT))
+        ox = round(cx - (cx - PB[0]) * sc); oy = round(cy - (cy - PB[1]) * sc); sp.alpha_composite(pim, (ox, oy))
+        sp.alpha_composite(ring(f), (cx - EXT, cy - EXT))
         R = (P / 2 + 10) * sc; m = Image.new("L", pim.size, 0); ImageDraw.Draw(m).ellipse([cx - ox - R, cy - oy - R, cx - ox + R, cy - oy + R], fill=255)
-        top = pim.copy(); top.putalpha(ImageChops.multiply(pim.getchannel("A"), m)); fr.alpha_composite(top, (ox, oy))
+        top = pim.copy(); top.putalpha(ImageChops.multiply(pim.getchannel("A"), m)); sp.alpha_composite(top, (ox, oy))
+        if k < 0.999: sp.putalpha(sp.getchannel("A").point(lambda v: int(v * k))); fr.alpha_composite(sp)
         e = state_at(t)
-        if e and not e["hero"]:
+        if e and e["hero"]: e = last_state_of(e["phrase"] - 1)   # the last caption stays until it has faded out
+        if e:
             i = e["phrase"]; a = 1.0 if i == 0 else ease((t - PH_START[i]) / 0.2)   # first phrase is on screen at frame 0
             if a < 1 and i > 0:
                 pe = last_state_of(i - 1)
-                if pe: paste(fr, *layer(pe["png"]), alpha=1 - a, dy=-18 * a)
-            paste(fr, *layer(e["png"]), alpha=a, dy=28 * (1 - a))
-        elif e and e["hero"] and t - HS < 0.25:
-            pe = last_state_of(e["phrase"] - 1); a = ease((t - HS) / 0.25)
-            if pe: paste(fr, *layer(pe["png"]), alpha=1 - a, dy=-18 * a)
-        return fr
-    def hero_treat(fr, h, z):
-        if z > 1.0005:
-            w2, h2 = round(Wd / z), round(Ht / z); x0 = round(960 - 960 / z); y0 = round(cy - cy / z)
-            fr = fr.crop((x0, y0, x0 + w2, y0 + h2)).resize((Wd, Ht), Image.LANCZOS)
-        if h > 0: fr.alpha_composite(Image.new("RGBA", (Wd, Ht), SCRIM + (int(255 * SCRIM_A * h),)))
+                if pe: paste(fr, *layer(pe["png"]), alpha=(1 - a) * k, dy=-18 * a)
+            paste(fr, *layer(e["png"]), alpha=a * k, dy=28 * (1 - a))
         return fr
     def chrome(fr, spk, prog, chip_a=1.0):
         fr.alpha_composite(UI[spk]); paste(fr, CHIP[spk], CHB, alpha=chip_a)
@@ -146,13 +169,13 @@ def render(clip_dir, source_audio, master_wav, outf, t0=0.0, t1=None, dump=None,
     def finish(fr, F):
         return np.clip(np.asarray(fr.convert("RGB"), dtype=np.float32) + GRAIN[(F // HOLD) % len(GRAIN)] + 0.5, 0, 255).astype(np.uint8)
     def frame(t):
-        f = min(NF - 1, int(round(t * FPS))); spk = W.speaker_at(TURNS, t); fr = scene(t, f, spk)
-        if t >= HS:
-            hp = (t - HS) / max(0.1, DUR - HS); fr = hero_treat(fr, ease((t - HS) / 0.4), 1 + 0.035 * (0.5 - 0.5 * math.cos(math.pi * min(1, hp))))
-            e = state_at(t); a = ease((t - HS - 0.05) / 0.3)
+        f = min(NF - 1, int(round(t * FPS))); spk = W.speaker_at(TURNS, t)
+        fr = scene(t, f, spk)
+        if t >= TS:   # payoff text: only once the speaker, chip and captions are fully gone
+            e = state_at(t); a = ease((t - TS) / HERO_TEXT_FADE)
             if e and e["hero"]: paste(fr, *layer(e["png"]), alpha=a, dy=22 * (1 - a))
         fr = Image.fromarray(np.clip(np.asarray(fr.convert("RGB"), dtype=np.float32) * VIG + 0.5, 0, 255).astype(np.uint8), "RGB").convert("RGBA")   # scene only
-        return chrome(fr, spk, t / DUR, 1 - ease((t - HS) / 0.25) if t >= HS else 1.0)
+        return chrome(fr, spk, t / DUR, spk_alpha(t))
     if dump:
         outs = []
         for T in dump:
@@ -162,16 +185,35 @@ def render(clip_dir, source_audio, master_wav, outf, t0=0.0, t1=None, dump=None,
         ain = ["-ss", f"{t0:.3f}", "-t", f"{max(0.05, T1 - t0):.3f}", "-i", master_wav]; log("audio: mastered " + master_wav)
     else:
         ain = ["-ss", f"{ST + t0:.3f}", "-t", f"{max(0.05, T1 - t0):.3f}", "-i", source_audio]; log("audio: RAW (no master found)")
+    global _PRODUCE
+    _PRODUCE = lambda F: finish(frame(F / FPS), F).tobytes()
+    nw = workers or max(1, min(8, (os.cpu_count() or 2) - 2))
+    pool = None
+    if nw > 1:
+        import multiprocessing as mp
+        try: pool = mp.get_context("fork").Pool(nw)   # forked before ffmpeg starts, so workers share all loaded layers
+        except Exception as ex: log(f"parallel frames unavailable ({ex}), drawing in one process"); pool = None
     ff = subprocess.Popen(["ffmpeg", "-v", "error", "-y", "-f", "rawvideo", "-pix_fmt", "rgb24", "-s", f"{Wd}x{Ht}", "-r", str(FPS), "-i", "-",
         *ain, "-map", "0:v", "-map", "1:a", "-af", "apad", "-vf", VF,
-        "-c:v", "libx264", "-preset", "slow", "-crf", str(crf), "-tune", "film", "-pix_fmt", "yuv420p", "-threads", str(threads),
+        "-c:v", "libx264", "-preset", "slow", "-crf", str(crf), "-tune", "film", "-pix_fmt", "yuv420p", *(["-threads", str(threads)] if threads else []),
         "-x264-params", "deblock=-1,-1:aq-mode=1:aq-strength=0.8:colorprim=bt709:transfer=bt709:colormatrix=bt709:range=tv",
         "-colorspace", "bt709", "-color_primaries", "bt709", "-color_trc", "bt709", "-color_range", "tv",
         "-c:a", "aac", "-b:a", "320k", "-ar", "48000", "-ac", "2", "-movflags", "+faststart", "-shortest", outf], stdin=subprocess.PIPE)
     F0, F1 = int(round(t0 * FPS)), int(round(T1 * FPS))
-    for F in range(F0, F1):
-        ff.stdin.write(finish(frame(F / FPS), F).tobytes())
-        if (F - F0) % 150 == 0: log(f"frame {F}/{F1}")
+    try:
+        if pool:
+            pend = deque()
+            for F in range(F0, F1):
+                pend.append(pool.apply_async(_work, (F,)))
+                if len(pend) >= nw * 3: ff.stdin.write(pend.popleft().get())   # bounded queue keeps memory flat
+                if (F - F0) % 150 == 0: log(f"frame {F}/{F1}")
+            while pend: ff.stdin.write(pend.popleft().get())
+        else:
+            for F in range(F0, F1):
+                ff.stdin.write(_PRODUCE(F))
+                if (F - F0) % 150 == 0: log(f"frame {F}/{F1}")
+    finally:
+        if pool: pool.close(); pool.join()
     ff.stdin.close(); ff.wait()
     if ff.returncode: raise SystemExit(f"ffmpeg failed ({ff.returncode})")
     return outf

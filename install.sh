@@ -10,7 +10,11 @@ if ! need google-chrome && ! need chromium && ! need chromium-browser; then
 fi
 need unzip || $SUDO apt-get install -y unzip
 need pdftotext || $SUDO apt-get install -y poppler-utils || true
-python3 -m pip install --user -q -r requirements.txt || python3 -m pip install --user -q --break-system-packages -r requirements.txt
+# Debian / Ubuntu mark the system python as "externally managed": add the flag up front instead of failing first.
+PIPX=""; if python3 -c 'import sys,sysconfig,os; sys.exit(0 if os.path.exists(os.path.join(sysconfig.get_path("stdlib"),"EXTERNALLY-MANAGED")) else 1)'; then PIPX="--break-system-packages"; fi
+python3 -m pip install --user -q --disable-pip-version-check $PIPX -r requirements.txt
+# X changes often: always take the newest yt-dlp so Space downloads keep working.
+python3 -m pip install --user -q -U --disable-pip-version-check $PIPX yt-dlp || true
 
 # Font: Inter 4.1 (SIL Open Font License, see fonts/OFL.txt), fetched from the official release and checked.
 if [ ! -s fonts/Inter-Variable.ttf ]; then
@@ -22,6 +26,7 @@ fi
 
 # Demo voice for the first run sample (synthetic, CC0). Built once with Piper in its own venv.
 if [ ! -s demo/demo_voice.m4a ] || [ ! -s demo/demo_transcript.json ]; then bash demo/build/build_demo.sh; fi
+
 
 # Speech model for real recordings (about 500 MB, once)
 python3 - <<'PY'

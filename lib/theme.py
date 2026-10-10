@@ -47,7 +47,7 @@ def palette(brand, theme):
         T = dict(
             page=page, scene_bg=bg,
             base=f"radial-gradient(1400px 900px at 30% 45%,{bg} 0%,{mix(bg, BLACK, 0.4)} 42%,{page} 100%)",
-            floor=rgba(mix(acc, BLACK, 0.4), .10), dots="rgba(255,255,255,.045)", mark=WHITE, markop=".03",
+            floor=rgba(mix(acc, BLACK, 0.4), .10), dots="rgba(255,255,255,.045)", mark=WHITE, markop=".014",
             b1=f"{rgba(mix(acc, BLACK, 0.33), .50)},{rgba(mix(acc, BLACK, 0.57), .20)}",
             b2=rgba(mix(acc, BLACK, 0.12), .34), b3=rgba(mix(acc, BLACK, 0.5), .12), bfade=rgba(acc, 0),
             halo=mix(bg, BLACK, 0.6), halo2=mix(bg, acc, 0.12),
@@ -74,7 +74,7 @@ def palette(brand, theme):
         T = dict(
             page=bg, scene_bg=bg,
             base=f"linear-gradient(125deg,{bg} 0%,{mix(bg, acc, 0.03)} 38%,{mix(bg, acc, 0.08)} 72%,{mix(bg, acc, 0.14)} 100%)",
-            floor=rgba(acc, .10), dots=rgba(ink, .085), mark=key, markop=".035",
+            floor=rgba(acc, .10), dots=rgba(ink, .085), mark=ink, markop=".012",
             b1=f"{rgba(acc, .30)},{rgba(acc, .10)}", b2=rgba(mix(acc, WHITE, 0.2), .24), b3=rgba(acc, .12), bfade=rgba(acc, 0),
             halo=bg, halo2=rgba(ink, .08),
             rim=f"linear-gradient(160deg,{mix(acc, WHITE, 0.45)},{acc} 45%,{key})",
@@ -84,8 +84,8 @@ def palette(brand, theme):
             dot=key, pillbg="linear-gradient(180deg,#FFFFFF,#FBFBFC)", pillbd=rgba(ink, .12),
             pillsh=f"0 18px 40px {rgba(ink, .12)}",
             hosthalo="#FFFFFF", hostring=key, chipbg="#FFFFFF", chipbd=rgba(ink, .14),
-            u=mix(ink, bg, 0.68), s=ink, c=ink, und=und, key=key, ku=mix(key, bg, 0.55),
-            nx=mix(ink, bg, 0.78), hu=mix(ink, bg, 0.58),
+            u=mix(ink, bg, 0.52), s=ink, c=ink, und=und, key=key, ku=mix(key, bg, 0.45),
+            nx=mix(ink, bg, 0.68), hu=mix(ink, bg, 0.52),
             btn_top=mix(btn, WHITE, 0.15), btn=btn, btn_ink=on(btn), btn_line=mix(btn, WHITE, 0.5),
             codesh=f"0 8px 22px {rgba(btn, .30)}",
             logo=brand["logo"].get("on_light") or brand["logo"].get("on_dark"),

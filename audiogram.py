@@ -3,7 +3,10 @@
 
   python3 audiogram.py doctor                                   check ffmpeg, Chrome, python deps, font
   python3 audiogram.py init      --work DIR --brand BRAND.json  create DIR/project.json (episode, people, clips)
-  python3 audiogram.py fetch     --work DIR URL_OR_FILE         download (yt-dlp) or copy the recording to DIR/source.m4a
+  python3 audiogram.py fetch     --work DIR X_SPACE_LINK         download an X Space (x.com/i/spaces/ID, or a post with a Space)
+                                                                 to DIR/source.m4a plus DIR/space.json (title, host, participants);
+                                                                 any other link or a local file also works
+  python3 audiogram.py pfp       --work DIR --key KEY --url PROFILE_IMAGE_URL [--name N --handle H]   speaker photo from X
   python3 audiogram.py transcribe --work DIR [--start S --end E] [--clip ID] [--model small.en]
   python3 audiogram.py quote     --work DIR --clip ID            the exact quote to show the user before rendering
   python3 audiogram.py make      --work DIR --clip ID --theme dark|light   master + layers + render + check
@@ -11,12 +14,16 @@
 
 First run for a new user (no questions first):
   python3 audiogram.py brand-from-url  URL  --out BRAND_DIR       logo, colors, name from their website
-  python3 audiogram.py brand-from-logo FILE --out BRAND_DIR [--name NAME]   from a logo (SVG/PNG/JPG) or brand kit PDF
+  python3 audiogram.py brand-from-logo FILE --out BRAND_DIR [--name NAME]   from a logo (SVG/PNG/JPG/WebP/ICO) or brand kit PDF
   python3 audiogram.py sample --brand BRAND_DIR/brand_profile.json [--theme dark|light] [--still-only]
-        30 s sample in their brand with the bundled demo voice: writes the preview still first, then the video
+        about 30 second sample in their brand with the bundled demo voice: writes the preview still first, then the video
+  python3 audiogram.py space-preview --work DIR [--space LINK] [--brand BRAND.json] [--space-title T] [--host @h --host-name N --host-pfp F]
+        [--cohost @h --cohost-name N --cohost-pfp F] [--theme dark|light]
+        one preview still of the user's own Space before any transcript: host photo in the ring, Space title, host and co-host
+        in the footer; with no --brand the colours come from the host's photo and the host's name is the wordmark
 
 Everything brand specific comes from the brand profile JSON. Nothing is hard coded."""
-import argparse, json, os, shutil, subprocess, sys, time
+import argparse, json, os, re, shutil, subprocess, sys, time, urllib.request
 KIT = os.path.dirname(os.path.abspath(__file__)); sys.path.insert(0, KIT)
 from lib import words as W
 
@@ -35,6 +42,7 @@ def mmss(t): return f"{int(t//60)}:{t%60:05.2f}"
 
 def cmd_doctor(a):
     ok = True
+    vf = os.path.join(KIT, "VERSION"); log(f"{'kit':14s} {open(vf).read().strip() if os.path.exists(vf) else 'unknown'}")
     for b in ("ffmpeg", "ffprobe"):
         p = shutil.which(b); log(f"{b:14s} {'ok ' + p if p else 'MISSING'}"); ok &= bool(p)
     ch = next((shutil.which(b) for b in ("google-chrome", "google-chrome-stable", "chromium", "chromium-browser") if shutil.which(b)), None)
@@ -56,21 +64,125 @@ def cmd_doctor(a):
 
 def cmd_init(a):
     os.makedirs(a.work, exist_ok=True); p = os.path.join(a.work, "project.json")
-    if os.path.exists(p): log("project.json already exists, leaving it alone"); return
+    if os.path.exists(p):
+        pj = json.load(open(p))
+        if not pj.get("brand_profile"): pj["brand_profile"] = os.path.abspath(a.brand); json.dump(pj, open(p, "w"), indent=1); log("brand set in", p)
+        else: log("project.json already exists, leaving it alone")
+        return
+    sp = os.path.join(a.work, "space.json"); info = json.load(open(sp)) if os.path.exists(sp) else None
+    people = {"speaker_id": {"name": "Display Name", "handle": "@handle", "img": ""}}
+    if info and info.get("host_handle"):   # the host is known from the Space itself; everyone else is matched later
+        people = {info["host_handle"].lstrip("@").lower(): {"name": info.get("host_name") or "", "handle": info["host_handle"], "img": ""}}
     json.dump({"brand_profile": os.path.abspath(a.brand),
-               "episode": {"title": "Episode or Space title", "subtitle": "X Space · Month D, YYYY", "source": "source.m4a",
-                           "transcript": "transcript.json", "spelling": []},
-               "people": {"speaker_id": {"name": "Display Name", "handle": "@handle", "img": "pfp/handle.jpg"}},
-               "clips": {}}, open(p, "w"), indent=1)
+               "episode": {"title": (info or {}).get("title") or "Space title",
+                           "subtitle": f"X Space · {info['date']}" if info and info.get("date") else "X Space · Month D, YYYY",
+                           "source": "source.m4a", "transcript": "transcript.json", "spelling": []},
+               "people": people, "clips": {}}, open(p, "w"), indent=1)
     log("wrote", p)
 
+def cmd_pfp(a):
+    """Save a speaker's X profile photo (full size) and name/handle into project.json people.<key>."""
+    p = os.path.join(a.work, "project.json"); pj = json.load(open(p)); os.makedirs(os.path.join(a.work, "pfp"), exist_ok=True)
+    url = re.sub(r"_(normal|bigger|mini|200x200)(\.\w+)$", r"_400x400\2", a.url)
+    ext = os.path.splitext(url.split("?")[0])[1] or ".jpg"; dst = os.path.join(a.work, "pfp", a.key + ext)
+    req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+    try: data = urllib.request.urlopen(req, timeout=30).read()
+    except Exception:
+        req = urllib.request.Request(a.url, headers={"User-Agent": "Mozilla/5.0"}); data = urllib.request.urlopen(req, timeout=30).read()
+    open(dst, "wb").write(data)
+    from PIL import Image
+    w, h = Image.open(dst).size
+    person = pj["people"].get(a.key, {}); person["img"] = os.path.join("pfp", a.key + ext)
+    if a.name: person["name"] = a.name
+    if a.handle: person["handle"] = "@" + a.handle.lstrip("@")
+    pj["people"][a.key] = person; pj["people"].pop("speaker_id", None); json.dump(pj, open(p, "w"), indent=1)
+    log(f"pfp: {dst} ({w}x{h})" + ("  (small photo: it may look soft)" if min(w, h) < 200 else ""))
+
+SPACE_RE = re.compile(r"(?:https?://)?(?:www\.|mobile\.)?(?:x|twitter)\.com/i/spaces/([A-Za-z0-9]{8,20})", re.I)
+STATUS_RE = re.compile(r"(?:https?://)?(?:www\.|mobile\.)?(?:x|twitter)\.com/(?:[A-Za-z0-9_]{1,15}|i(?:/web)?)/status(?:es)?/(\d+)", re.I)
+
+def ytdlp(*args, timeout=None):
+    return subprocess.run(["yt-dlp", "--no-warnings", "--retries", "10", "--fragment-retries", "20", *args], capture_output=True, text=True, timeout=timeout)
+
+def clean_title(t):
+    """Space titles often carry emoji and decoration ("\U0001F399\ufe0fThe Vest Week Ever\u203c\ufe0f"). Keep the words only."""
+    import unicodedata
+    t = "".join(ch if (unicodedata.category(ch)[0] in "LNZ" or ch in "&'.,:!?#@$%+-/()") else " " for ch in t)
+    t = re.sub(r"\s+", " ", t).strip(" -:|.,"); return t
+
+def merge_project(work, info=None, **ep):
+    """Create or update DIR/project.json with what we know about the Space (title, date, host, link)."""
+    p = os.path.join(work, "project.json")
+    pj = json.load(open(p)) if os.path.exists(p) else {"brand_profile": "", "episode": {"source": "source.m4a", "transcript": "transcript.json",
+                                                                                     "spelling": []}, "people": {}, "clips": {}}
+    e = pj.setdefault("episode", {})
+    if info:
+        pj["space"] = {k: info.get(k) for k in ("id", "url", "title", "title_raw", "host_name", "host_handle", "host_pfp_url", "date",
+                                               "started_utc", "participants")}
+        if info.get("title"): e["title"] = info["title"]
+        if info.get("date"): e["subtitle"] = f"X Space · {info['date']}"
+        if info.get("host_handle"):
+            k = info["host_handle"].lstrip("@").lower(); per = pj["people"].setdefault(k, {"name": "", "handle": info["host_handle"], "img": ""})
+            per["name"] = per.get("name") or info.get("host_name") or ""; pj["people"].pop("speaker_id", None)
+    for k, v in ep.items():
+        if v is not None: e[k] = v
+    json.dump(pj, open(p, "w"), indent=1); return pj
+
+def space_info(url):
+    """Metadata yt-dlp can see for a Space: title, host, start time, listed participants."""
+    r = ytdlp("-J", "--skip-download", url, timeout=120)
+    if r.returncode != 0: return None, (r.stderr or r.stdout).strip().splitlines()[-1:] or ["unknown error"]
+    j = json.loads(r.stdout); desc = j.get("description") or ""
+    parts = [p.strip() for p in re.sub(r"^.*?participated by\s*", "", desc).split(",") if p.strip()] if "participated by" in desc else []
+    ts = j.get("release_timestamp") or j.get("timestamp")
+    when = time.strftime("%b %-d, %Y", time.gmtime(ts)) if ts else ""
+    return dict(id=j.get("id"), url=j.get("webpage_url") or url, title=clean_title(j.get("title") or ""), title_raw=j.get("title") or "",
+                host_name=j.get("uploader"), host_pfp_url=j.get("thumbnail") or "",
+                host_handle=("@" + j["uploader_id"]) if j.get("uploader_id") else None, started_utc=ts, date=when,
+                live_status=j.get("live_status"), participants=parts), None
+
 def cmd_fetch(a):
-    os.makedirs(a.work, exist_ok=True); out = os.path.join(a.work, "source.m4a")
-    if os.path.exists(a.src):
-        subprocess.run(["ffmpeg", "-v", "error", "-y", "-i", a.src, "-vn", "-c:a", "aac", "-b:a", "256k", out], check=True)
-    else:
-        subprocess.run(["yt-dlp", "-f", "bestaudio/best", "-x", "--audio-format", "m4a", "-o", os.path.join(a.work, "source.%(ext)s"), a.src], check=True)
-    log("source:", out)
+    """X Space links (x.com or twitter.com /i/spaces/<id>, with /peek or query strings, or a post that carries a Space),
+    any other yt-dlp link, or a local file. Writes DIR/source.m4a, and DIR/space.json for Spaces."""
+    os.makedirs(a.work, exist_ok=True); out = os.path.join(a.work, "source.m4a"); src = a.src.strip().strip("<>")
+    if os.path.exists(src):
+        subprocess.run(["ffmpeg", "-v", "error", "-y", "-i", src, "-vn", "-c:a", "aac", "-b:a", "256k", out], check=True)
+        log("source:", out); return
+    m = SPACE_RE.search(src); info = None
+    if m: src = f"https://x.com/i/spaces/{m.group(1)}"
+    if m or STATUS_RE.search(src):
+        info, err = space_info(src)
+        sm = STATUS_RE.search(src) if not m else None
+        if info is None and sm:   # a post that only links or quotes the Space: read the Space link from X's public embed data
+            try:
+                emb = urllib.request.urlopen(urllib.request.Request(f"https://cdn.syndication.twimg.com/tweet-result?id={sm.group(1)}&token=a",
+                                             headers={"User-Agent": "Mozilla/5.0"}), timeout=20).read().decode("utf-8", "ignore")
+                sid = re.search(r"spaces/([A-Za-z0-9]{8,20})", emb)
+                if sid: src = f"https://x.com/i/spaces/{sid.group(1)}"; info, err = space_info(src)
+            except Exception: pass
+        if info is None and m:
+            log("SPACE NOT AVAILABLE: " + " ".join(err) + "\nA Space can only be downloaded when the host recorded it and the replay is"
+                " public. If the error is not 'not found', update the downloader once (python3 -m pip install --user -U yt-dlp) and"
+                " try again. Otherwise ask the user for the replay link or an audio file."); return 2
+        if info is None:
+            log("NO SPACE FOUND IN THAT POST: " + " ".join(err) + "\nOpen the post with the X connector, find the x.com/i/spaces/<id> link"
+                " in it (or in the quoted post), and run fetch with that link."); return 2
+        if info.get("live_status") == "is_live":
+            log("SPACE IS STILL LIVE: wait until it ends and the replay is up, then fetch again."); return 2
+        src = f"https://x.com/i/spaces/{info['id']}" if info.get("id") else src
+        json.dump(info, open(os.path.join(a.work, "space.json"), "w"), indent=1); merge_project(a.work, info)
+        log(f"space: {info['title']} | host {info['host_name']} {info['host_handle']} | {info['date']} | "
+            f"{len(info['participants'])} listed participants: " + ", ".join(info["participants"]))
+    for f in os.listdir(a.work):
+        if f.startswith("source.") and f != "source.m4a": os.remove(os.path.join(a.work, f))
+    t0 = time.time()
+    r = subprocess.run(["yt-dlp", "--no-warnings", "--retries", "10", "--fragment-retries", "20", "-N", "8", "-f", "bestaudio/best",
+                        "-x", "--audio-format", "m4a", "-o", os.path.join(a.work, "source.%(ext)s"), src])
+    if r.returncode != 0 or not os.path.exists(out):
+        log("DOWNLOAD FAILED: update the downloader once (python3 -m pip install --user -U yt-dlp, add --break-system-packages if pip asks)"
+            " and try again; if it still fails, ask the user for the replay link or an audio file."); return 2
+    d = float(subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", out], capture_output=True, text=True).stdout or 0)
+    log(f"source: {out} ({d / 60:.1f} min, downloaded in {time.time() - t0:.0f}s)")
 
 def cmd_transcribe(a):
     from lib.transcribe import transcribe
@@ -115,15 +227,24 @@ def cmd_make(a):
     cd = os.path.join(bd, theme)
     if os.path.exists(cd): shutil.rmtree(cd)
     meta, n = Layers(a.work, pj, brand, bdir, a.clip, theme, cd).build(a.jobs); log(f"{n} layers in {time.time()-t:.0f}s")
+    from lib.check import check_layout
+    lf, _, linfo = check_layout(cd)
+    log("layout: " + json.dumps(linfo))
+    if lf:   # never show or render a design that breaks the layout rules
+        log("LAYOUT FAIL: " + "; ".join(lf)); return 3
     if a.dump:
         for p in render(cd, src, mw, None, dump=[float(x) for x in a.dump.split(",")]): log("still:", p)
         return
     outd = os.path.join(a.work, "out"); os.makedirs(outd, exist_ok=True)
     outf = next_name(os.path.join(outd, f"{a.clip}_{theme}_16x9.mp4"))
     render(cd, src, mw, outf, crf=a.crf, log=log); log(f"rendered {outf} in {time.time()-t:.0f}s")
-    r = check(outf, os.path.join(outd, "stills"), os.path.splitext(os.path.basename(outf))[0], meta["caption_text"])
+    r = check(outf, os.path.join(outd, "stills"), os.path.splitext(os.path.basename(outf))[0], meta["caption_text"], clip_dir=cd)
+    if not r["ok"]:   # QA gate: a failed clip is renamed so it can never be delivered by mistake
+        bad = os.path.splitext(outf)[0] + "_QA_FAILED.mp4"; os.replace(outf, bad); r["file"] = bad; outf = bad
     json.dump(r, open(os.path.splitext(outf)[0] + ".qa.json", "w"), indent=1)
-    log(json.dumps(r, indent=1)); log("QA PASS" if r["ok"] else "QA FAIL: " + "; ".join(r["fails"]))
+    log(json.dumps(r, indent=1))
+    if r["ok"]: log("QA PASS: " + outf)
+    else: log("QA FAIL (do not deliver): " + "; ".join(r["fails"])); return 3
 
 def cmd_brand_url(a):
     from lib.brand import from_url
@@ -142,7 +263,7 @@ def cmd_sample(a):
     demo = os.path.join(KIT, "demo"); tx = json.load(open(os.path.join(demo, "demo_transcript.json")))
     end = round(tx[-1]["words"][-1]["e"] + 0.42, 3)
     json.dump({"brand_profile": brand_p,
-               "episode": {"title": f"{brand.get('brand_name', 'Your Show')} Live", "subtitle": "Sample clip",
+               "episode": {"title": brand.get("brand_name", "Your Brand"), "subtitle": "Sample clip",
                            "source": os.path.join(demo, "demo_voice.m4a"), "transcript": os.path.join(demo, "demo_transcript.json"), "spelling": []},
                "people": {"guest": {"name": "Your Guest", "handle": "@yourguest", "img": ""}},
                "clips": {"sample": {"start": 0.0, "end": end, "turns": [[0.0, "guest"]],
@@ -150,21 +271,104 @@ def cmd_sample(a):
               open(os.path.join(work, "project.json"), "w"), indent=1)
     theme = a.theme or brand.get("default_theme", "dark")
     base = dict(work=work, clip="sample", theme=theme, crf=12, jobs=6, remaster=False)
-    cmd_make(argparse.Namespace(**base, dump="9.2")); still = os.path.join(work, "build", "sample", theme, "ref_009.20.png")
+    if cmd_make(argparse.Namespace(**base, dump="9.2")): log("SAMPLE FAILED: layout check failed, see above"); return 3
+    still = os.path.join(work, "build", "sample", theme, "ref_009.20.png")
     os.makedirs(os.path.join(work, "out"), exist_ok=True); dst = os.path.join(work, "out", f"sample_{theme}_still.png"); shutil.copy(still, dst)
     log("STILL READY: " + dst)
-    if not a.still_only: cmd_make(argparse.Namespace(**base, dump=None))
+    if not a.still_only: return cmd_make(argparse.Namespace(**base, dump=None))
+
+PREVIEW_LINE = "Your best moments from the Space will show up right here, word by word."
+
+def _save_pfp(work, key, src):
+    """A local file or an image URL saved as DIR/pfp/<key>.<ext>. Returns the path, or None."""
+    if not src: return None
+    os.makedirs(os.path.join(work, "pfp"), exist_ok=True)
+    if os.path.exists(src):
+        dst = os.path.join(work, "pfp", key + (os.path.splitext(src)[1].lower() or ".jpg"))
+        if os.path.abspath(src) != os.path.abspath(dst): shutil.copy(src, dst)
+        return dst
+    url = re.sub(r"_(normal|bigger|mini|200x200)(\.\w+)$", r"_400x400\2", src)
+    dst = os.path.join(work, "pfp", key + (os.path.splitext(url.split("?")[0])[1] or ".jpg"))
+    try: open(dst, "wb").write(urllib.request.urlopen(urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"}), timeout=30).read()); return dst
+    except Exception as ex: log(f"could not download the picture for {key}: {ex}"); return None
+
+def cmd_space_preview(a):
+    """One preview still of the user's own Space before any transcript exists: the host's real photo in the ring, the
+    host's name and handle, the Space title and date in the top bar, host and co-host in the footer, the user's brand
+    (or colours from the host's photo with the host's name as a text wordmark) and a placeholder caption."""
+    from lib.brand import from_photo
+    work = a.work; os.makedirs(work, exist_ok=True); info = None
+    if a.space:
+        m = SPACE_RE.search(a.space); url = f"https://x.com/i/spaces/{m.group(1)}" if m else a.space.strip()
+        info, err = space_info(url)
+        if info: json.dump(info, open(os.path.join(work, "space.json"), "w"), indent=1); log(f"space: {info['title']} | {info['host_handle']} | {info['date']}")
+        else: log("could not read the Space details (" + " ".join(err) + "): using the flags given")
+    elif os.path.exists(os.path.join(work, "space.json")): info = json.load(open(os.path.join(work, "space.json")))
+    pj = merge_project(work, info)
+    ep = pj["episode"]; info = info or pj.get("space") or {}
+    title = a.space_title or (ep.get("title") if ep.get("title") not in (None, "", "Space title") else "") or info.get("title") or ""
+    date = a.date or info.get("date") or ""
+    sub = f"X Space · {date}" if date else "X Space"
+    host = "@" + (a.host or info.get("host_handle") or "").lstrip("@")
+    if host == "@": log("NEED THE HOST: pass --host @handle (or --space LINK so it is read from the Space)"); return 2
+    hk = host[1:].lower(); hp = pj["people"].get(hk, {})
+    hname = a.host_name or hp.get("name") or (info.get("host_name") if (info.get("host_handle") or "").lower() == host.lower() else "") or host[1:]
+    hpfp = _save_pfp(work, hk, a.host_pfp) or (os.path.join(work, hp["img"]) if hp.get("img") and not os.path.isabs(hp["img"]) else hp.get("img")) \
+        or _save_pfp(work, hk, info.get("host_pfp_url") if (info.get("host_handle") or "").lower() == host.lower() else None)
+    if not hpfp or not os.path.exists(hpfp):
+        log("NEED THE HOST'S PICTURE: pass --host-pfp FILE_OR_URL (look the handle up with the X tools). Never show initials."); return 2
+    hosts = [{"name": hname, "handle": host, "img": os.path.abspath(hpfp)}]
+    pj["people"][hk] = {"name": hname, "handle": host, "img": os.path.relpath(hpfp, work)}
+    if a.cohost:
+        ch = "@" + a.cohost.lstrip("@"); ck = ch[1:].lower(); cp = pj["people"].get(ck, {})
+        cpfp = _save_pfp(work, ck, a.cohost_pfp) or (os.path.join(work, cp["img"]) if cp.get("img") else None)
+        if not cpfp: log(f"note: no picture for {ch}, the footer shows their initials. Pass --cohost-pfp to fix.")
+        hosts.append({"name": a.cohost_name or cp.get("name") or ch[1:], "handle": ch, "img": os.path.abspath(cpfp) if cpfp else ""})
+        pj["people"][ck] = {"name": hosts[-1]["name"], "handle": ch, "img": os.path.relpath(cpfp, work) if cpfp else ""}
+    if a.brand: brand_p = os.path.abspath(a.brand)
+    else:
+        bdir = os.path.join(work, "brand_host"); prof, notes = from_photo(hpfp, bdir, hname, host); brand_p = os.path.join(bdir, "brand_profile.json")
+        log("brand from the host's photo: " + "; ".join(notes))
+    if a.brand or not pj.get("brand_profile"): pj["brand_profile"] = brand_p
+    ep.update(title=title or ep.get("title", ""), subtitle=sub, hosts=hosts)
+    json.dump(pj, open(os.path.join(work, "project.json"), "w"), indent=1)
+    # a tiny stand-alone project: the placeholder line timed word by word over the bundled demo voice (drives the ring)
+    pv = os.path.join(work, "preview"); os.makedirs(pv, exist_ok=True); demo = os.path.join(KIT, "demo")
+    toks = PREVIEW_LINE.split(" "); step = 0.36
+    words = [dict(s=round(0.2 + i * step, 3), e=round(0.2 + i * step + step - 0.04, 3), w=t) for i, t in enumerate(toks)]
+    json.dump([{"s": words[0]["s"], "e": words[-1]["e"], "words": words}], open(os.path.join(pv, "preview_transcript.json"), "w"))
+    end = round(words[-1]["e"] + 0.5, 3)
+    json.dump({"brand_profile": brand_p,
+               "episode": {"title": title, "subtitle": sub, "hosts": hosts, "source": os.path.join(demo, "demo_voice.m4a"),
+                           "transcript": "preview_transcript.json", "spelling": []},
+               "people": {"host": {"name": hname, "handle": host, "img": os.path.abspath(hpfp)}},
+               "clips": {"preview": {"start": 0.0, "end": end, "turns": [[0.0, "host"]], "accent_words": [], "drops": [], "fixes": [],
+                                     "payoff": False}}}, open(os.path.join(pv, "project.json"), "w"), indent=1)
+    brand = json.load(open(brand_p)); theme = a.theme or brand.get("default_theme", "dark")
+    T = round(words[2]["s"] + 0.12, 2)   # "Your best" spoken, "moments" lit: the first few words read as highlighted
+    if cmd_make(argparse.Namespace(work=pv, clip="preview", theme=theme, crf=12, jobs=a.jobs, remaster=False, dump=str(T))):
+        log("PREVIEW FAILED: layout check failed, see above"); return 3
+    still = os.path.join(pv, "build", "preview", theme, f"ref_{T:06.2f}.png")
+    dst = os.path.abspath(a.out) if a.out else os.path.join(work, "out", f"space_preview_{theme}.png")
+    os.makedirs(os.path.dirname(dst), exist_ok=True); shutil.copy(still, dst)
+    log("PREVIEW READY: " + dst + "  (look at it before sending)")
 
 def cmd_check(a):
+    """Re-run the full QA gate on an existing render (layout checks need --clip and --theme)."""
     from lib.check import check
-    r = check(a.file, os.path.join(a.work, "out", "stills"), os.path.splitext(os.path.basename(a.file))[0])
-    log(json.dumps(r, indent=1))
+    cd = os.path.join(a.work, "build", a.clip, a.theme) if a.clip and a.theme else None
+    txt = json.load(open(os.path.join(cd, "timeline.json")))["caption_text"] if cd else ""
+    r = check(a.file, os.path.join(a.work, "out", "stills"), os.path.splitext(os.path.basename(a.file))[0], txt, clip_dir=cd)
+    log(json.dumps(r, indent=1)); log("QA PASS" if r["ok"] else "QA FAIL: " + "; ".join(r["fails"]))
+    return 0 if r["ok"] else 3
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter); sp = ap.add_subparsers(dest="cmd", required=True)
     sp.add_parser("doctor")
     p = sp.add_parser("init"); p.add_argument("--work", required=True); p.add_argument("--brand", required=True)
     p = sp.add_parser("fetch"); p.add_argument("--work", required=True); p.add_argument("src")
+    p = sp.add_parser("pfp"); p.add_argument("--work", required=True); p.add_argument("--key", required=True); p.add_argument("--url", required=True)
+    p.add_argument("--name"); p.add_argument("--handle")
     p = sp.add_parser("transcribe"); p.add_argument("--work", required=True); p.add_argument("--start", type=float); p.add_argument("--end", type=float)
     p.add_argument("--clip"); p.add_argument("--model", default="small.en")
     p = sp.add_parser("quote"); p.add_argument("--work", required=True); p.add_argument("--clip", required=True)
@@ -175,9 +379,14 @@ if __name__ == "__main__":
     p = sp.add_parser("brand-from-logo"); p.add_argument("file"); p.add_argument("--out", required=True); p.add_argument("--name")
     p = sp.add_parser("sample"); p.add_argument("--brand", required=True); p.add_argument("--theme", choices=["dark", "light"]); p.add_argument("--work")
     p.add_argument("--still-only", action="store_true")
-    p = sp.add_parser("check"); p.add_argument("--work", required=True); p.add_argument("file")
+    p = sp.add_parser("space-preview"); p.add_argument("--work", required=True); p.add_argument("--space", help="X Space or post link: title, date, host read automatically")
+    p.add_argument("--brand", help="brand_profile.json; omit to take colours from the host's photo"); p.add_argument("--space-title"); p.add_argument("--date")
+    p.add_argument("--host"); p.add_argument("--host-name"); p.add_argument("--host-pfp"); p.add_argument("--cohost"); p.add_argument("--cohost-name")
+    p.add_argument("--cohost-pfp"); p.add_argument("--theme", choices=["dark", "light"]); p.add_argument("--out"); p.add_argument("--jobs", type=int, default=6)
+    p = sp.add_parser("check"); p.add_argument("--work", required=True); p.add_argument("file"); p.add_argument("--clip")
+    p.add_argument("--theme", choices=["dark", "light"])
     a = ap.parse_args()
     if getattr(a, "work", None): a.work = os.path.abspath(a.work)
-    sys.exit({"doctor": cmd_doctor, "init": cmd_init, "fetch": cmd_fetch, "transcribe": cmd_transcribe, "quote": cmd_quote,
+    sys.exit({"doctor": cmd_doctor, "init": cmd_init, "fetch": cmd_fetch, "pfp": cmd_pfp, "transcribe": cmd_transcribe, "quote": cmd_quote,
               "make": cmd_make, "check": cmd_check, "brand-from-url": cmd_brand_url,
-              "brand-from-logo": cmd_brand_logo, "sample": cmd_sample}[a.cmd](a) or 0)
+              "brand-from-logo": cmd_brand_logo, "sample": cmd_sample, "space-preview": cmd_space_preview}[a.cmd](a) or 0)

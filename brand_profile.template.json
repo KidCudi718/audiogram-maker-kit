@@ -8,7 +8,9 @@
     "style": "wordmark",
     "dark_mode": "original",
     "light_mode": "original",
-    "_note": "style: wordmark (logo alone) or icon (a square icon next to the brand name). dark_mode / light_mode: original (logo colors), white or dark (a clean one color version). SVG or transparent PNG. on_dark is used on the dark style, on_light on the light style. If only one is given it is used for both. mark is an optional icon-only version used as a faint 3 to 5 percent watermark (leave empty to skip). If there is no logo at all, the brand name is set as text."
+    "style_dark": "wordmark",
+    "style_light": "wordmark",
+    "_note": "style: wordmark (logo alone), icon (a square icon next to the brand name) or text (the brand name set in the caption font). style_dark / style_light override style for one look. dark_mode / light_mode: original (logo colors), white or dark (a clean one color version). Only recolor a single color logo; multi color logos and icons keep original. SVG or transparent PNG. on_dark is used on the dark style, on_light on the light style. If only one is given it is used for both. mark is an optional single color wordmark used as a very faint background watermark (about 1 percent, hidden during the payoff); leave it empty for icons, stickers or multi color logos. If there is no logo at all, the brand name is set as text."
   },
   "colors": {
     "accent": "#00E0A0",
