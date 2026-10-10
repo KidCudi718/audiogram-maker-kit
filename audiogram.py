@@ -121,7 +121,10 @@ def merge_project(work, info=None, **ep):
     e = pj.setdefault("episode", {})
     if info:
         pj["space"] = {k: info.get(k) for k in ("id", "url", "title", "title_raw", "host_name", "host_handle", "host_pfp_url", "date",
-                                               "started_utc", "participants")}
+                                               "started_utc", "participants", "people")}
+        for x in info.get("people") or []:   # every host and speaker X lists, with real handles and full size photos
+            k = x["handle"][1:].lower(); per = pj["people"].setdefault(k, {"name": "", "handle": x["handle"], "img": ""})
+            per["name"] = per.get("name") or x["name"]; per["handle"] = x["handle"]; per["role"] = x["role"]; per["pfp_url"] = x["pfp_url"]
         if info.get("title"): e["title"] = info["title"]
         if info.get("date"): e["subtitle"] = f"X Space · {info['date']}"
         if info.get("host_handle"):
@@ -130,6 +133,26 @@ def merge_project(work, info=None, **ep):
     for k, v in ep.items():
         if v is not None: e[k] = v
     json.dump(pj, open(p, "w"), indent=1); return pj
+
+def x_participants(space_id):
+    """Hosts and speakers with their real X handles and photos, from the same public Space lookup yt-dlp uses.
+    Maps display names like "SunnyD" to handles without guessing. Empty list if X changes the API."""
+    try:
+        import yt_dlp
+        from yt_dlp.extractor.twitter import TwitterSpacesIE
+        ydl = yt_dlp.YoutubeDL({"quiet": True, "no_warnings": True}); ie = TwitterSpacesIE(ydl)
+        d = ie._call_graphql_api("HPEisOmj1epUNLCWTYhUWw/AudioSpaceById", space_id)["audioSpace"]
+    except Exception as ex:
+        log(f"note: could not read the speaker list from X ({ex})"); return []
+    out = []
+    for role in ("admins", "speakers"):
+        for u in (d.get("participants") or {}).get(role) or []:
+            if not u.get("twitter_screen_name"): continue
+            av = re.sub(r"_(normal|bigger|mini|reasonably_small|200x200)(\.\w+)$", r"_400x400\2", u.get("avatar_url") or "")
+            out.append(dict(role="host" if role == "admins" else "speaker", name=u.get("display_name") or "",
+                            handle="@" + u["twitter_screen_name"], twitter_id=(u.get("user") or {}).get("rest_id"), pfp_url=av,
+                            joined_utc=round(u["start"] / 1000) if u.get("start") else None))
+    return out
 
 def space_info(url):
     """Metadata yt-dlp can see for a Space: title, host, start time, listed participants."""
@@ -142,7 +165,7 @@ def space_info(url):
     return dict(id=j.get("id"), url=j.get("webpage_url") or url, title=clean_title(j.get("title") or ""), title_raw=j.get("title") or "",
                 host_name=j.get("uploader"), host_pfp_url=j.get("thumbnail") or "",
                 host_handle=("@" + j["uploader_id"]) if j.get("uploader_id") else None, started_utc=ts, date=when,
-                live_status=j.get("live_status"), participants=parts), None
+                live_status=j.get("live_status"), participants=parts, people=x_participants(j.get("id")) if j.get("id") else []), None
 
 def cmd_fetch(a):
     """X Space links (x.com or twitter.com /i/spaces/<id>, with /peek or query strings, or a post that carries a Space),
@@ -176,6 +199,7 @@ def cmd_fetch(a):
         json.dump(info, open(os.path.join(a.work, "space.json"), "w"), indent=1); merge_project(a.work, info)
         log(f"space: {info['title']} | host {info['host_name']} {info['host_handle']} | {info['date']} | "
             f"{len(info['participants'])} listed participants: " + ", ".join(info["participants"]))
+        if info.get("people"): log("hosts and speakers from X: " + ", ".join(f"{x['name']} {x['handle']} ({x['role']})" for x in info["people"]))
     for f in os.listdir(a.work):
         if f.startswith("source.") and f != "source.m4a": os.remove(os.path.join(a.work, f))
     t0 = time.time()
