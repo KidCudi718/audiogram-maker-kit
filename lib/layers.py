@@ -48,6 +48,16 @@ out.fitted=q('[data-fit]').map(e=>[e.className,e.dataset.fitted]);
 const p=document.createElement('pre');p.id='agm';p.textContent=JSON.stringify(out);document.body.appendChild(p);};
 </script>"""
 
+LINES_JS = """<script>
+// Captions show at most 2 lines with even spacing: a phrase that wraps is balanced over 2 lines and the next line
+// preview is dropped; a one line phrase gets a one line preview (trimmed to the words that fit, never a 1 word orphan).
+document.fonts.ready.then(()=>{const c=document.querySelector('.cap');if(!c)return;const cur=c.firstElementChild,nx=c.querySelector('.nx');
+const lh=parseFloat(getComputedStyle(c).lineHeight);const lines=el=>Math.round(el.getBoundingClientRect().height/lh);
+if(!nx)return;if(lines(cur)>1){nx.remove();return;}
+const ws=Array.from(nx.querySelectorAll('.w'));while(lines(nx)>1&&ws.length>2){ws.pop().remove();}
+if(lines(nx)>1||nx.querySelectorAll('.w').length<2)nx.remove();});
+</script>"""
+
 class Layers:
     def __init__(self, project_dir, project, brand, brand_dir, clip_id, theme, out_dir):
         self.pd, self.pj, self.br, self.bd, self.cid, self.theme = project_dir, project, brand, brand_dir, clip_id, theme
@@ -258,8 +268,8 @@ class Layers:
     def cap(self, ph, cur, sp, nxt):
         px = self.px
         css = f""".cap{{position:absolute;left:{G['capx']}px;width:{G['capr']-G['capx']}px;top:{G['capy']}px;font-size:{px}px;font-weight:{self.weight};
- letter-spacing:-0.0235em;line-height:1.16;color:{self.T['s']};text-transform:none;text-wrap:pretty;overflow-wrap:normal}} .nx{{margin-top:14px}}{self.kcss()}"""
-        body = f'<div class="cap" data-fit="0,{G["capmaxh"]},36"><div>{self.words_html(ph,cur,sp)}</div>' + (f'<div class="nx">{self.words_html(nxt,None,0)}</div>' if nxt else '') + '</div>'
+ letter-spacing:-0.0235em;line-height:1.16;color:{self.T['s']};text-transform:none;text-wrap:balance;overflow-wrap:normal}} .nx{{margin-top:0}}{self.kcss()}"""
+        body = f'<div class="cap" data-fit="0,{G["capmaxh"]},36"><div>{self.words_html(ph,cur,sp)}</div>' + (f'<div class="nx">{self.words_html(nxt,None,0)}</div>' if nxt else '') + '</div>' + LINES_JS
         return self.doc(css, body)
 
     def hero(self, ph, cur, sp):
