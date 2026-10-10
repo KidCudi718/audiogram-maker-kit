@@ -1,0 +1,57 @@
+{
+  "_readme": "Brand profile for Audiogram Maker. One file per brand. Every color, logo, label and link in the video comes from here. Keys starting with _ are notes and are ignored. Paths are relative to this file.",
+  "brand_name": "",
+  "logo": {
+    "on_dark": "assets/logo-white.svg",
+    "on_light": "assets/logo-dark.svg",
+    "mark": "",
+    "style": "wordmark",
+    "dark_mode": "original",
+    "light_mode": "original",
+    "_note": "style: wordmark (logo alone) or icon (a square icon next to the brand name). dark_mode / light_mode: original (logo colors), white or dark (a clean one color version). SVG or transparent PNG. on_dark is used on the dark style, on_light on the light style. If only one is given it is used for both. mark is an optional icon-only version used as a faint 3 to 5 percent watermark (leave empty to skip). If there is no logo at all, the brand name is set as text."
+  },
+  "colors": {
+    "accent": "#00E0A0",
+    "primary": "#0A5C45",
+    "background_dark": "#08281A",
+    "background_light": "#F8F8FB",
+    "_optional": "ring_dark (default #FFFFFF), ring_light (default primary), text_light, key_light, button (default accent), button_light",
+    "_note": "accent: the bright highlight (current word underline, progress bar, button, glow). Pick a vivid one. primary: the deeper brand color used for text accents in the light style. background_dark: the mid tone of the dark background (it is darkened toward the edges automatically). background_light: the light style page color."
+  },
+  "default_theme": "dark",
+  "font": {
+    "family": "Inter",
+    "file": "",
+    "_note": "Leave file empty to use Inter (installed with the kit). To use a brand font, point file at a .ttf/.otf/.woff2 the user has the right to use."
+  },
+  "link": "example.com/listen",
+  "promo_code": "",
+  "footer": {
+    "cta_line": "Listen on Example",
+    "code_label": "Code:",
+    "button_text": "",
+    "hosts_label": "Hosts",
+    "footer_text": "",
+    "_note": "cta_line is the small label before the link. The button shows '<code_label> <promo_code>' when a promo code is set, otherwise button_text, otherwise nothing. footer_text replaces the hosts row when there are no hosts."
+  },
+  "hosts": [
+    {"name": "Host Name", "handle": "@host", "img": "assets/host.jpg"}
+  ],
+  "spelling": ["ExampleBrand"],
+  "captions": {
+    "size": "medium",
+    "weight": 600,
+    "highlight": "underline",
+    "phrase_words": [4, 8],
+    "_note": "size: small | medium | large (60, 68, 76 px) or a number. highlight: underline (current word white with an accent underline, the default), color (current word in the accent color) or both. phrase_words: min and max words per caption line. Captions are always sentence case, never all caps. spelling: brand and product names the transcript should always spell this way."
+  },
+  "format": {
+    "aspect": "16:9",
+    "_note": "16:9 1920x1080 is the default for X. Vertical is not built into this kit yet."
+  },
+  "delivery": {
+    "destination": "chat",
+    "drive_folder_id": "",
+    "_note": "chat (send files in the conversation) or drive (upload to the user's connected Google Drive folder)."
+  }
+}
