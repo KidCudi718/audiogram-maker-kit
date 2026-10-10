@@ -283,7 +283,7 @@ class Layers:
         report = {}
         ws = W.load_words(self.pd, self.pj, self.br, self.cid, report)
         ST, EN, DUR = W.clip_window(self.clip)
-        mn, mx = self.br.get("captions", {}).get("phrase_words", [4, 8])
+        mn, mx = self.clip.get("phrase_words") or self.br.get("captions", {}).get("phrase_words", [4, 8])
         phs = W.build_phrases(ws, self.clip, mn, mx); tt = W.times(phs, DUR)
         payoff = self.clip.get("payoff", True)
         H = W.payoff_index(phs) if payoff else -1

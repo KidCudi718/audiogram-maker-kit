@@ -81,6 +81,9 @@ def load_words(project_dir, project, brand, clip_id, report=None):
 
 SOFT = set("a an the and or but so to of in on at for with from by as that is are was were be i we you they it my our your their this these those have has had".split())
 
+DANGLE = SOFT | set("will would can could should shall may might must just very into about than if not do does did am been "
+                     "being because when which who what where how".split())
+
 def _split_score(ph, j, n):
     w = ph[j - 1]["w"]; nx = ph[j]["w"].lower().strip(",.")
     sc = -0.45 * abs(j - n / 2)
@@ -92,6 +95,8 @@ def _split_score(ph, j, n):
 def _split(ph, mn, mx):
     if len(ph) <= mx: return [ph]
     js = list(range(mn, len(ph) - mn + 1)) or list(range(1, len(ph)))
+    ok = [j for j in js if ph[j - 1]["w"].lower().strip(",.") not in DANGLE or re.search(r"[,;:.?!]$", ph[j - 1]["w"])]
+    js = ok or js   # never end a caption on a dangling word ("will", "the", "from") when a natural break exists
     j = max(js, key=lambda j: _split_score(ph, j, len(ph)))
     return _split(ph[:j], mn, mx) + _split(ph[j:], mn, mx)
 

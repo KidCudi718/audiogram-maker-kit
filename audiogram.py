@@ -277,7 +277,7 @@ def cmd_sample(a):
     log("STILL READY: " + dst)
     if not a.still_only: return cmd_make(argparse.Namespace(**base, dump=None))
 
-PREVIEW_LINE = "Your best moments from the Space will show up right here, word by word."
+PREVIEW_LINE = "Your best moments will light up here, word by word."
 
 def _save_pfp(work, key, src):
     """A local file or an image URL saved as DIR/pfp/<key>.<ext>. Returns the path, or None."""
@@ -343,7 +343,7 @@ def cmd_space_preview(a):
                            "transcript": "preview_transcript.json", "spelling": []},
                "people": {"host": {"name": hname, "handle": host, "img": os.path.abspath(hpfp)}},
                "clips": {"preview": {"start": 0.0, "end": end, "turns": [[0.0, "host"]], "accent_words": [], "drops": [], "fixes": [],
-                                     "payoff": False}}}, open(os.path.join(pv, "project.json"), "w"), indent=1)
+                                     "payoff": False, "phrase_words": [4, 12]}}}, open(os.path.join(pv, "project.json"), "w"), indent=1)
     brand = json.load(open(brand_p)); theme = a.theme or brand.get("default_theme", "dark")
     T = round(words[2]["s"] + 0.12, 2)   # "Your best" spoken, "moments" lit: the first few words read as highlighted
     if cmd_make(argparse.Namespace(work=pv, clip="preview", theme=theme, crf=12, jobs=a.jobs, remaster=False, dump=str(T))):
