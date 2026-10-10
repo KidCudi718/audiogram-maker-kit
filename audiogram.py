@@ -8,6 +8,7 @@
                                                                  any other link or a local file also works
   python3 audiogram.py pfp       --work DIR --key KEY --url PROFILE_IMAGE_URL [--name N --handle H]   speaker photo from X
   python3 audiogram.py transcribe --work DIR [--start S --end E] [--clip ID] [--model small.en]
+  python3 audiogram.py speakers  --work DIR                      tag who spoke when from X's live captions (runs after transcribe)
   python3 audiogram.py quote     --work DIR --clip ID            the exact quote to show the user before rendering
   python3 audiogram.py make      --work DIR --clip ID --theme dark|light   master + layers + render + check
   python3 audiogram.py check     --work DIR FILE.mp4             QA stills and specs for any finished file
@@ -213,6 +214,10 @@ def cmd_fetch(a):
             " and try again; if it still fails, ask the user for the replay link or an audio file."); return 2
     d = float(subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", out], capture_output=True, text=True).stdout or 0)
     log(f"source: {out} ({d / 60:.1f} min, downloaded in {time.time() - t0:.0f}s)")
+    if info and info.get("id"):   # who spoke when: X's own live captions, matched to the transcript by `speakers`
+        from lib.xspace import fetch_captions
+        n = fetch_captions(info["id"], os.path.join(a.work, "x_captions.json"), log=log)
+        if n: log(f"speaker captions from X: {n} (speakers are tagged automatically after transcribe)")
 
 def cmd_transcribe(a):
     from lib.transcribe import transcribe
@@ -223,12 +228,69 @@ def cmd_transcribe(a):
     else:
         out = os.path.join(a.work, pj["episode"].get("transcript", "transcript.json")); st, en = a.start, a.end
     transcribe(src, out, a.model, st, en, log=log)
+    if not a.clip and os.path.exists(os.path.join(a.work, "x_captions.json")): cmd_speakers(a)
+
+def cmd_speakers(a):
+    """Tag every transcript word with its speaker's X handle from X's captions. Lists the stretches nobody could be matched to."""
+    from lib.xspace import tag
+    if not os.path.exists(os.path.join(a.work, "x_captions.json")):
+        log("no X captions for this Space: map speakers from the transcript and ask the user"); return 0
+    t = time.time(); r = tag(a.work, log=log)
+    if not r: return 0
+    p = os.path.join(a.work, "project.json"); pj = json.load(open(p)); xc = json.load(open(os.path.join(a.work, "x_captions.json")))
+    names = {c["handle"]: c["name"] for c in xc["captions"]}
+    for h in dict.fromkeys(x[2] for x in r["turns"] if x[2] != "unknown"):
+        per = pj["people"].setdefault(h[1:].lower(), {"name": names.get(h, ""), "handle": h, "img": ""})
+        per["handle"] = h; per["name"] = per.get("name") or names.get(h, "")
+    json.dump(pj, open(p, "w"), indent=1)
+    log(f"speakers: caption delay {r['offset_s']}s ({r['offset_matches']} matches), {r['coverage']:.0%} of speech tagged in {time.time() - t:.1f}s")
+    gaps = [x for x in r["turns"] if x[2] == "unknown" and x[1] - x[0] >= 3]
+    for s_, e_, _ in gaps: log(f"  unknown speaker {mmss(s_)} to {mmss(e_)}")
+    if gaps: log("Ask the user only about the unknown stretches you want to clip.")
+
+def fill_turns(work, pj, cid):
+    """A clip without turns gets them from speakers.json. Returns False (and says where) if part of it has no known speaker."""
+    c = pj["clips"][cid]
+    if c.get("turns") or c.get("speaker"): return True
+    sp = os.path.join(work, "speakers.json")
+    if not os.path.exists(sp): log(f"clip {cid}: no turns and no speakers.json: set turns by hand"); return False
+    from lib.xspace import speaker_at
+    T = json.load(open(sp))["turns"]; st, en, _ = W.clip_window(c); turns, unk = [], []
+    for sg in W.load_segments(work, pj, cid):
+        for w in sg["words"]:
+            if w["s"] >= st - 0.05 and w["s"] < en - 0.1:
+                h = speaker_at(T, (w["s"] + w["e"]) / 2)
+                if h == "unknown": unk.append(w["s"]); continue
+                k = h[1:].lower()
+                if not turns or turns[-1][1] != k: turns.append([round(st if not turns else w["s"], 3), k])
+    if unk:
+        log(f"clip {cid}: UNKNOWN SPEAKER {mmss(min(unk))} to {mmss(max(unk))}. Ask the user who it is, then set turns by hand."); return False
+    if not turns: log(f"clip {cid}: no words in the window"); return False
+    c["turns"] = turns; json.dump(pj, open(os.path.join(work, "project.json"), "w"), indent=1); return True
+
+def ensure_photos(work, pj, keys):
+    """Every speaker and footer host gets their real X photo from pfp_url (saved by fetch) before anything renders."""
+    changed = False
+    for k in keys:
+        per = pj["people"].get(k) or {}
+        if not per.get("img") and per.get("pfp_url"):
+            f = _save_pfp(work, k, per["pfp_url"])
+            if f: per["img"] = os.path.relpath(f, work); changed = True
+    for h in pj["episode"].get("hosts") or []:
+        per = pj["people"].get((h.get("handle") or "").lstrip("@").lower()) or {}
+        if not h.get("img"):
+            if not per.get("img") and per.get("pfp_url"):
+                f = _save_pfp(work, h["handle"].lstrip("@").lower(), per["pfp_url"]); per["img"] = os.path.relpath(f, work) if f else ""
+            if per.get("img"): h["img"] = os.path.join(work, per["img"]); changed = True
+    if changed: json.dump(pj, open(os.path.join(work, "project.json"), "w"), indent=1)
 
 def cmd_quote(a):
-    pj, brand, _ = load_project(a.work); c = pj["clips"][a.clip]; rep = {}
+    pj, brand, _ = load_project(a.work)
+    if not fill_turns(a.work, pj, a.clip): return 3
+    c = pj["clips"][a.clip]; rep = {}
     ws = W.load_words(a.work, pj, brand, a.clip, rep); st, en, dur = W.clip_window(c)
     log(f"Clip {a.clip}: {mmss(st)} to {mmss(en)} ({dur:.1f}s)")
-    TURNS = W.turns(c); names = [pj["people"][s]["name"] for s in dict.fromkeys(s for _, s in TURNS)]
+    TURNS = W.turns(c); names = [(pj["people"].get(s) or {}).get("name", s) + " " + (pj["people"].get(s) or {}).get("handle", "") for s in dict.fromkeys(s for _, s in TURNS)]
     log("Speaker(s): " + ", ".join(names))
     log("Caption text: " + " ".join(w["w"] for w in ws))
     segs = W.load_segments(a.work, pj, a.clip)
@@ -250,7 +312,10 @@ def cmd_make(a):
     from lib.render import render
     from lib.master_audio import master
     from lib.check import check
-    pj, brand, bdir = load_project(a.work); c = pj["clips"][a.clip]; src = source_path(a.work, pj)
+    pj, brand, bdir = load_project(a.work)
+    if not fill_turns(a.work, pj, a.clip): return 3
+    c = pj["clips"][a.clip]; src = source_path(a.work, pj)
+    ensure_photos(a.work, pj, [k for _, k in W.turns(c)])
     if not brand: log("NO BRAND YET: run space-preview (colours from the host's photo) or init --brand BRAND.json first"); return 2
     def has_photo(per):
         im = (per or {}).get("img") or ""
@@ -413,6 +478,7 @@ if __name__ == "__main__":
     p.add_argument("--name"); p.add_argument("--handle")
     p = sp.add_parser("transcribe"); p.add_argument("--work", required=True); p.add_argument("--start", type=float); p.add_argument("--end", type=float)
     p.add_argument("--clip"); p.add_argument("--model", default="small.en")
+    p = sp.add_parser("speakers"); p.add_argument("--work", required=True)
     p = sp.add_parser("quote"); p.add_argument("--work", required=True); p.add_argument("--clip", required=True)
     p = sp.add_parser("make"); p.add_argument("--work", required=True); p.add_argument("--clip", required=True); p.add_argument("--theme", choices=["dark", "light"])
     p.add_argument("--crf", type=int, default=12); p.add_argument("--jobs", type=int, default=6); p.add_argument("--remaster", action="store_true")
@@ -429,6 +495,6 @@ if __name__ == "__main__":
     p.add_argument("--theme", choices=["dark", "light"])
     a = ap.parse_args()
     if getattr(a, "work", None): a.work = os.path.abspath(a.work)
-    sys.exit({"doctor": cmd_doctor, "init": cmd_init, "fetch": cmd_fetch, "pfp": cmd_pfp, "transcribe": cmd_transcribe, "quote": cmd_quote,
+    sys.exit({"doctor": cmd_doctor, "init": cmd_init, "fetch": cmd_fetch, "pfp": cmd_pfp, "transcribe": cmd_transcribe, "speakers": cmd_speakers, "quote": cmd_quote,
               "make": cmd_make, "check": cmd_check, "brand-from-url": cmd_brand_url,
               "brand-from-logo": cmd_brand_logo, "sample": cmd_sample, "space-preview": cmd_space_preview}[a.cmd](a) or 0)

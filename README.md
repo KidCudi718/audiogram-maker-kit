@@ -54,7 +54,8 @@ K=kit/audiogram.py; WK=/workspace/audiograms/<job>
 python3 $K fetch --work $WK "https://x.com/i/spaces/<id>"        # also /peek links, twitter.com, a post with a Space, a file
 python3 $K init --work $WK --brand /path/brand_profile.json      # project.json, prefilled from space.json (title, date, host)
 python3 $K pfp --work $WK --key sam --url <profile_image_url> --name "Sam" --handle sam   # each speaker's X photo
-python3 $K transcribe --work $WK                                  # transcript.json / .txt / .srt
+python3 $K transcribe --work $WK                                  # transcript.json / .txt / .srt, then speakers
+python3 $K speakers --work $WK                                    # who said what, from X's live captions (speakers.json)
 #   edit $WK/project.json: episode title, people (name, handle, photo), clips (start, end, turns, accent words, caption edits)
 python3 $K quote --work $WK --clip <id>                           # the exact quote to show the user first
 python3 $K make  --work $WK --clip <id> --theme dark               # master audio + layers + render + QA
@@ -104,7 +105,7 @@ and refuse to draw a broken design (`LAYOUT FAIL`).
 - `drops`: caption only filler removal. Bracketed tokens are removed from the captions; the audio is never edited.
 - `fixes`: caption only corrections of transcription errors (names, tickers, brand words).
 - `payoff_words`: 0 means the last full sentence becomes the large centred payoff line. Set N to make the last N words the payoff.
-- A missing photo falls back to an initials badge in brand colors.
+- Speaker photos download from X automatically; `make` refuses to render an initials badge.
 - Re-transcribe one clip more carefully with `transcribe --clip <id> --model medium.en` (writes tx/<id>.json, used automatically).
 
 ## What the look is (do not drift from this without the user asking)
