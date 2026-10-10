@@ -3,10 +3,12 @@ Everything is a best guess with sensible defaults. The user can tweak any of it 
   from_url(url, out_dir)    logo (site logos rendered with the site's own CSS, wordmark first), colors, name
   from_file(path, out_dir)  logo image (SVG/PNG/JPG/WebP) or brand kit PDF: dominant colors, hex codes, name
 Writes out_dir/brand_profile.json and out_dir/assets/*. Returns (profile, notes).
-Logo rules: single color logos may be recolored white or dark so they read on each style. Multi color logos and
-icons always keep their own colors. Every logo is checked for legibility on each style; if none passes, the
-brand name is set as clean text instead. The faint background watermark is only used for a clean single color
-wordmark that reads well on both styles."""
+Look rules (v1.2, the approved default look for every brand):
+  * Backgrounds are always neutral (charcoal #0E0E10 dark, gray #DCDCDE light). The brand colour is used only as the
+    accent (current word underline, accent words, progress bar). Glow and frame line are neutral.
+  * No logo in the top bar. The brand mark (a square-ish logo, or the host's photo) is the first photo of the footer's
+    Hosts row. Logos are NEVER recolored: if the original does not read, the notes say so and the user is asked.
+  * Captions 84 px, weight 650. No background watermark."""
 import colorsys, html as htmlmod, json, os, re, shutil, socket, subprocess, tempfile, urllib.parse, urllib.request
 from collections import Counter
 import numpy as np
@@ -25,7 +27,10 @@ THIRD_PARTY_COLORS = {"#4285F4", "#1A73E8", "#34A853", "#FBBC04", "#FBBC05", "#E
 # logo walls and other companies' logos
 LOGO_SKIP = (r"customer|partner|client|social|trusted|testimonial|integration|press|award|badge|store|google-?play|"
              r"avatar|marquee|carousel|sponsor|investor|case-?stud|compan|logos|proof|cookie|onetrust|powered")
-NEUTRAL = dict(accent="#9AA6B8", primary="#1A1A1A", background_dark="#141518", background_light="#FAFAF9")
+LOOK = dict(background_dark="#0E0E10", background_light="#DCDCDE", glow_dark="#8A8A90", glow_light="#FFFFFF",
+            edge_dark="#FFFFFF", edge_light="#000000")   # the approved neutral look: identical for every brand
+NEUTRAL = dict(accent="#9AA6B8", primary="#1A1A1A", **LOOK)
+MARK_MAX_ASPECT = 1.3   # wider logos (wordmarks) cannot sit in a round Hosts photo
 
 def chrome_bin():
     for b in ("google-chrome", "google-chrome-stable", "chromium", "chromium-browser"):
@@ -113,11 +118,11 @@ def same_hue(a, b, tol=0.06):
 def derive(brand):
     """accent, primary and both backgrounds from one brand colour."""
     hh, s, l = hsl(brand)
-    acc = brand; bgd = from_hsl(hh, min(0.75, max(0.35, s * 0.8)), 0.085)
+    acc = brand; bgd = LOOK["background_dark"]   # backgrounds never take the brand hue
     while contrast(acc, bgd) < 5.5 and hsl(acc)[2] < 0.8: acc = from_hsl(hh, max(s, 0.6), hsl(acc)[2] + 0.04)
-    prim = brand; bgl = from_hsl(hh, 0.30, 0.975)
+    prim = brand; bgl = LOOK["background_light"]
     while contrast(prim, bgl) < 4.8 and hsl(prim)[2] > 0.12: prim = from_hsl(hh, s, hsl(prim)[2] - 0.04)
-    return dict(accent=acc, primary=prim, background_dark=bgd, background_light=bgl)
+    return dict(accent=acc, primary=prim, **LOOK)
 
 def score_colors(cands, relaxed=False):
     score = Counter()
@@ -190,28 +195,28 @@ def choose_logos(cands, colors, notes):
     for theme, bg in (("dark", colors["background_dark"]), ("light", colors["background_light"])):
         res[theme] = None
         for f, png, info in cands:
-            if info["mono"]:
-                mode = "original" if contrast(info["main"], bg) >= 3 else ("white" if theme == "dark" else "dark")
-            else: mode = "original"      # never flatten a multi colour logo or an icon
+            mode = "original"   # logos are never recolored (v1.2)
             lg = legibility(png, mode, bg); need = 0.55 if info["mono"] else (0.6 if info["aspect"] >= 1.8 else 0.5)   # icons carry their own tile
             if DEBUG: print(f"logo {os.path.basename(f)} {theme}: mono={info['mono']} aspect={info['aspect']:.2f} mode={mode} legible={lg:.2f}")
             if lg >= need:
                 res[theme] = dict(file=f, mode=mode, style="wordmark" if info["aspect"] >= 1.8 else "icon", info=info, legible=lg); break
-        if res[theme] is None: notes.append(f"no logo reads well on the {theme} style: the brand name is set as text there")
+        if res[theme] is None and cands:
+            notes.append(f"the logo in its own colors does not read well on the {theme} style ({bg}): never recolor it; ask the user for another file")
     return res
 
 # ---------------- profile ----------------
-def defaults(name, link, tagline, colors, theme, logo, notes):
+def defaults(name, link, tagline, colors, theme, logo, notes, brand_mark=""):
+    """The approved default look. tagline is accepted for compatibility but never shown (the footer is the Hosts row)."""
     return {
         "_readme": "Made automatically by Audiogram Maker. Every field can be changed. See brand_profile.template.json for all options.",
         "_notes": notes,
-        "brand_name": name, "logo": logo, "colors": colors, "default_theme": theme,
+        "brand_name": name, "brand_mark": brand_mark, "logo": logo, "colors": dict(colors), "default_theme": "dark",
         "font": {"family": "Inter", "file": ""}, "link": link, "promo_code": "",
-        "footer": {"cta_line": "Visit", "code_label": "Code:", "button_text": "", "hosts_label": "Hosts",
-                   "footer_text": tagline or f"Clips from {name}"},
+        "footer": {"cta_line": "", "code_label": "Code:", "button_text": "", "hosts_label": "Hosts", "footer_text": "",
+                   "host_names": True, "photo_size": 56, "align": "center"},
         "hosts": [], "spelling": [name] if name and " " not in name else [],
-        "captions": {"size": "medium", "weight": 600, "highlight": "underline", "phrase_words": [4, 8]},
-        "format": {"aspect": "16:9"}, "delivery": {"destination": "chat", "drive_folder_id": ""}}
+        "captions": {"size": 84, "weight": 650, "highlight": "underline", "phrase_words": [4, 8]},
+        "format": {"aspect": "16:9"}, "layout": {"chipy": 352, "capy": 438, "capmaxh": 420}}
 
 def short(t, n=46):
     """A short footer line from the site description, only if a whole sentence or clause fits. Never cut mid thought."""
@@ -232,21 +237,23 @@ def clean_name(title, host):
 def finish(out_dir, name, link, tagline, colors, theme, picks, notes, neutral=False):
     small = [n for n in notes if "too small to look sharp" in n]   # only worth mentioning when no usable logo was found
     notes[:] = [n for n in notes if n not in small] + ([] if (picks.get("dark") or picks.get("light")) else small[:1])
-    logo = {"on_dark": "", "on_light": "", "mark": "", "style": "text", "dark_mode": "original", "light_mode": "original"}
+    logo = {"on_dark": "", "on_light": "", "mark": "", "style": "none", "style_dark": "none", "style_light": "none",
+            "dark_mode": "original", "light_mode": "original", "title_size": 22}
     for th in ("dark", "light"):
         p = picks.get(th)
-        if p:
-            logo[f"on_{th}"] = os.path.relpath(p["file"], out_dir); logo[f"{th}_mode"] = p["mode"]; logo[f"style_{th}"] = p["style"]
-            notes.append(f"logo on {th}: {os.path.basename(p['file'])}, {p['style']}, {p['mode']} colors")
-        else: logo[f"style_{th}"] = "text"
-    styles = [logo[f"style_{th}"] for th in ("dark", "light")]
-    logo["style"] = "wordmark" if "wordmark" in styles else ("icon" if "icon" in styles else "text")
-    d, l = picks.get("dark"), picks.get("light")
-    if d and l and d["file"] == l["file"] and d["info"]["mono"] and d["style"] == "wordmark" and min(d["legible"], l["legible"]) >= 0.8:
-        logo["mark"] = logo["on_dark"]; notes.append("single color wordmark: used as a very faint background watermark")
-    else: notes.append("no background watermark (only used for a clean single color wordmark)")
+        if p: logo[f"on_{th}"] = os.path.relpath(p["file"], out_dir); notes.append(f"logo readable on {th}: {os.path.basename(p['file'])} ({p['style']}, original colors)")
+    # brand mark for the Hosts row: the first readable logo that is square-ish (a round photo cannot hold a wide wordmark)
+    # it must read on the dark main style (it sits on the dark footer), in its own colors
+    mark = ""; d = picks.get("dark")
+    if d and d["info"]["aspect"] <= MARK_MAX_ASPECT:
+        mark = os.path.relpath(d["file"], out_dir); notes.append(f"brand mark (first Hosts photo): {mark}")
+        if not picks.get("light"): notes.append("the brand mark does not read on the light style: check the light version by eye")
+    elif d:
+        notes.append("the logo is a wide wordmark and cannot sit in a round Hosts photo: ask for a square logo (their X profile picture works)")
+    elif picks.get("light"):
+        notes.append("the logo only reads on light backgrounds, so it is not used on the dark main style: ask for a version that reads on dark, or use their X profile picture")
     if neutral: colors = dict(colors, neutral=True)
-    prof = defaults(name, link, tagline, colors, theme, logo, notes)
+    prof = defaults(name, link, tagline, colors, theme, logo, notes, mark)
     json.dump(prof, open(os.path.join(out_dir, "brand_profile.json"), "w"), indent=2)
     return prof, notes
 
@@ -528,9 +535,10 @@ def from_photo(path, out_dir, name, handle=""):
     wordmark, no logo, no link, no promo code (never invent those)."""
     os.makedirs(out_dir, exist_ok=True); acc, note = photo_accent(path)
     colors = derive(acc); colors["accent"] = acc if contrast(acc, colors["background_dark"]) >= 5.5 else colors["accent"]
-    logo = {"on_dark": "", "on_light": "", "mark": "", "style": "text", "style_dark": "text", "style_light": "text",
-            "dark_mode": "original", "light_mode": "original"}
-    prof = defaults(name, "", "", colors, "dark", logo, [note, "no brand given: host name as a text wordmark, no logo, link or code"])
-    prof["footer"]["footer_text"] = ""; prof["source"] = {"kind": "host_photo", "photo": os.path.abspath(path), "handle": handle}
+    logo = {"on_dark": "", "on_light": "", "mark": "", "style": "none", "style_dark": "none", "style_light": "none",
+            "dark_mode": "original", "light_mode": "original", "title_size": 22}
+    prof = defaults(name, "", "", colors, "dark", logo, [note, "no brand given: the host's photo is the brand mark; no logo, link or code"],
+                    os.path.abspath(path))
+    prof["brand_handle"] = handle; prof["source"] = {"kind": "host_photo", "photo": os.path.abspath(path), "handle": handle}
     json.dump(prof, open(os.path.join(out_dir, "brand_profile.json"), "w"), indent=2)
     return prof, prof["_notes"]

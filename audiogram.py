@@ -10,8 +10,10 @@
   python3 audiogram.py transcribe --work DIR [--start S --end E] [--clip ID] [--model small.en]
   python3 audiogram.py speakers  --work DIR                      tag who spoke when from X's live captions (runs after transcribe)
   python3 audiogram.py quote     --work DIR --clip ID            the exact quote to show the user before rendering
-  python3 audiogram.py make      --work DIR --clip ID --theme dark|light   master + layers + render + check
+  python3 audiogram.py make      --work DIR --clip ID --theme dark|light [--master]   master audio + layers + one encode to the small shareable MP4 + QA
   python3 audiogram.py check     --work DIR FILE.mp4             QA stills and specs for any finished file
+  python3 audiogram.py publish   FILE [--title T] [--json]       upload to the user's OWN storage, print one play+download link
+  python3 audiogram.py publish   --check | --sweep | --make-player DIR   test storage / delete expired clips / write the player page
 
 First run for a new user (no questions first):
   python3 audiogram.py brand-from-url  URL  --out BRAND_DIR       logo, colors, name from their website
@@ -61,17 +63,49 @@ def cmd_doctor(a):
             for f in ("loudnorm", "afftdn", "acompressor", "alimiter", "ebur128"):
                 if f" {f} " not in out: log(f"ffmpeg filter {f} MISSING"); ok = False
         except Exception: pass
-    log(f"{'font':14s} {'ok' if os.path.exists(os.path.join(KIT,'fonts','Inter-Variable.ttf')) else 'MISSING'}")
+    fo = os.path.exists(os.path.join(KIT, 'fonts', 'Inter-Variable.ttf')); log(f"{'font':14s} {'ok' if fo else 'MISSING'}"); ok &= fo
     dv = all(os.path.exists(os.path.join(KIT, "demo", f)) for f in ("demo_voice.m4a", "demo_transcript.json"))
-    log(f"{'demo voice':14s} {'ok' if dv else 'MISSING (sample needs it)'}"); ok &= dv
+    log(f"{'demo voice':14s} {'ok' if dv else 'not built (built on first sample or space-preview)'}")
+    try:
+        from faster_whisper.utils import download_model
+        download_model("small.en", local_files_only=True); log(f"{'whisper':14s} ok small.en")
+    except Exception: log(f"{'whisper':14s} MISSING small.en (run install.sh)"); ok = False
+    from lib.publish import status as pub_status
+    log(f"{'publish':14s} {pub_status()}")
     log("READY" if ok else "NOT READY: run kit/install.sh"); return 0 if ok else 1
+
+HOSTS_MAX = 4   # footer Hosts row: brand mark plus up to 3 Space hosts fit at 56 px with names and handles
+
+def build_hosts(work, pj, brand_p):
+    """Footer Hosts row for this Space: the brand mark first (never recolored), then the Space's host and co-hosts
+    from X (photos are downloaded by make). Leaves an existing row alone."""
+    ep = pj.setdefault("episode", {})
+    if ep.get("hosts"): return
+    brand = json.load(open(brand_p)); bdir = os.path.dirname(brand_p); row = []
+    bm = brand.get("brand_mark") or ""
+    if bm:
+        bmp = bm if os.path.isabs(bm) else os.path.join(bdir, bm)
+        if os.path.exists(bmp): row.append({"name": brand.get("brand_name", ""), "handle": brand.get("brand_handle", ""), "img": bmp, "mark": True})
+    sp = pj.get("space") or {}; main = (sp.get("host_handle") or "").lower()
+    hosts = [per for per in pj.get("people", {}).values() if per.get("role") == "host" or (per.get("handle") or "").lower() == main]
+    hosts.sort(key=lambda per: (per.get("handle") or "").lower() != main)
+    seen = {(r.get("handle") or "").lower() for r in row if r.get("handle")}
+    for per in hosts:
+        h = per.get("handle") or ""
+        if h.lower() in seen: continue
+        seen.add(h.lower()); row.append({"name": per.get("name", ""), "handle": h, "img": ""})
+    if len(row) > HOSTS_MAX: log(f"Hosts row: showing {HOSTS_MAX} of {len(row)} (" + ", ".join(r.get("handle") or r["name"] for r in row[HOSTS_MAX:]) + " left out)")
+    ep["hosts"] = row[:HOSTS_MAX]
 
 def cmd_init(a):
     os.makedirs(a.work, exist_ok=True); p = os.path.join(a.work, "project.json")
     if os.path.exists(p):
         pj = json.load(open(p))
-        if not pj.get("brand_profile"): pj["brand_profile"] = os.path.abspath(a.brand); json.dump(pj, open(p, "w"), indent=1); log("brand set in", p)
+        if not pj.get("brand_profile"):
+            pj["brand_profile"] = os.path.abspath(a.brand); build_hosts(a.work, pj, pj["brand_profile"])
+            json.dump(pj, open(p, "w"), indent=1); log("brand set in", p)
         else: log("project.json already exists, leaving it alone")
+        log("Hosts row: " + ", ".join(h.get("handle") or h.get("name", "") for h in pj["episode"].get("hosts") or []))
         return
     sp = os.path.join(a.work, "space.json"); info = json.load(open(sp)) if os.path.exists(sp) else None
     people = {"speaker_id": {"name": "Display Name", "handle": "@handle", "img": ""}}
@@ -82,6 +116,7 @@ def cmd_init(a):
                            "subtitle": f"X Space · {info['date']}" if info and info.get("date") else "X Space · Month D, YYYY",
                            "source": "source.m4a", "transcript": "transcript.json", "spelling": []},
                "people": people, "clips": {}}, open(p, "w"), indent=1)
+    pj = json.load(open(p)); build_hosts(a.work, pj, os.path.abspath(a.brand)); json.dump(pj, open(p, "w"), indent=1)
     log("wrote", p)
 
 def cmd_pfp(a):
@@ -109,7 +144,7 @@ def ytdlp(*args, timeout=None):
     return subprocess.run(["yt-dlp", "--no-warnings", "--retries", "10", "--fragment-retries", "20", *args], capture_output=True, text=True, timeout=timeout)
 
 def clean_title(t):
-    """Space titles often carry emoji and decoration ("\U0001F399\ufe0fThe Vest Week Ever\u203c\ufe0f"). Keep the words only."""
+    """Space titles often carry emoji and decoration ("\U0001F399\ufe0fThe Best Week Ever\u203c\ufe0f"). Keep the words only."""
     import unicodedata
     t = "".join(ch if (unicodedata.category(ch)[0] in "LNZ" or ch in "&'.,:!?#@$%+-/()") else " " for ch in t)
     t = re.sub(r"\s+", " ", t).strip(" -:|.,"); return t
@@ -227,8 +262,13 @@ def cmd_transcribe(a):
         out = os.path.join(a.work, "tx", a.clip + ".json"); st = max(0, c["start"] - 4); en = c["end"] + 20
     else:
         out = os.path.join(a.work, pj["episode"].get("transcript", "transcript.json")); st, en = a.start, a.end
-    transcribe(src, out, a.model, st, en, log=log)
-    if not a.clip and os.path.exists(os.path.join(a.work, "x_captions.json")): cmd_speakers(a)
+    caps = not a.clip and os.path.exists(os.path.join(a.work, "x_captions.json"))
+    def quiet_speakers():   # tag speakers on what is transcribed so far, without the full report
+        import io, contextlib
+        with contextlib.redirect_stdout(io.StringIO()): cmd_speakers(a)
+    transcribe(src, out, a.model, st, en, log=log, chunk=0 if a.clip else a.chunk, batch_size=a.batch,
+               on_chunk=quiet_speakers if caps else None)
+    if caps: cmd_speakers(a)
 
 def cmd_speakers(a):
     """Tag every transcript word with its speaker's X handle from X's captions. Lists the stretches nobody could be matched to."""
@@ -284,9 +324,26 @@ def ensure_photos(work, pj, keys):
             if per.get("img"): h["img"] = os.path.join(work, per["img"]); changed = True
     if changed: json.dump(pj, open(os.path.join(work, "project.json"), "w"), indent=1)
 
+def pad_end(work, pj, brand, cid):
+    """v1.2: the clip end always sits at least tail_pad_s (default 0.4 s) after the last word that starts inside the
+    clip, so the last word is never cut, but never so late that the next word bleeds in. Saves and logs any change."""
+    c = pj["clips"][cid]; st, en, _ = W.clip_window(c)
+    pad = float((brand.get("clip") or {}).get("tail_pad_s", 0.4) if brand else 0.4)
+    ws = sorted((w for sg in W.load_segments(work, pj, cid) for w in sg["words"]), key=lambda w: w["s"])
+    inside = [w for w in ws if st - 0.05 <= w["s"] < en - 0.05]
+    if not inside: return False
+    lw = max(inside, key=lambda w: w["e"]); need = lw["e"] + pad
+    nxt = next((w for w in ws if w["s"] >= lw["e"] - 0.01 and w is not lw and w["s"] >= en - 0.05), None)
+    if nxt and nxt["s"] < need: need = max(lw["e"] + 0.12, nxt["s"] - 0.03)   # a quick reply: stop just before it
+    need = round(need, 3)
+    if en >= need - 0.005: return False
+    c["end"] = need; json.dump(pj, open(os.path.join(work, "project.json"), "w"), indent=1)
+    log(f"end padded: {mmss(en)} -> {mmss(need)} so the last word '{lw['w'].strip()}' plays in full"); return True
+
 def cmd_quote(a):
     pj, brand, _ = load_project(a.work)
     if not fill_turns(a.work, pj, a.clip): return 3
+    pad_end(a.work, pj, brand, a.clip)
     c = pj["clips"][a.clip]; rep = {}
     ws = W.load_words(a.work, pj, brand, a.clip, rep); st, en, dur = W.clip_window(c)
     log(f"Clip {a.clip}: {mmss(st)} to {mmss(en)} ({dur:.1f}s)")
@@ -326,11 +383,14 @@ def cmd_make(a):
     if missing and not getattr(a, "allow_initials", False):   # never ship an initials badge: every speaker and footer host needs their real profile picture
         log("NEED REAL PROFILE PICTURES (no initials badges): " + ", ".join(missing) + ". Confirm each person's X handle with the user,"
             " then run: pfp --work DIR --key KEY --url PROFILE_IMAGE_URL --name NAME --handle @HANDLE"); return 4
+    pad_end(a.work, pj, brand, a.clip)
     st, en, dur = W.clip_window(c); theme = a.theme or brand.get("default_theme", "dark")
     bd = os.path.join(a.work, "build", a.clip); os.makedirs(bd, exist_ok=True)
-    mw = os.path.join(bd, "master.wav"); t = time.time()
-    if not os.path.exists(mw) or a.remaster:
-        m = master(src, st, dur, mw); log(f"mastered: {m['before']['I']} -> {m['after']['I']} LUFS, TP {m['after']['TP']}")
+    mw = os.path.join(bd, "master.wav"); t = time.time(); win = os.path.join(bd, "master.window")
+    same = os.path.exists(win) and open(win).read().strip() == f"{st:.3f} {dur:.3f}"
+    if not os.path.exists(mw) or a.remaster or not same:   # a changed start or end always remasters
+        m = master(src, st, dur, mw); open(win, "w").write(f"{st:.3f} {dur:.3f}")
+        log(f"mastered: {m['before']['I']} -> {m['after']['I']} LUFS, TP {m['after']['TP']}")
     cd = os.path.join(bd, theme)
     if os.path.exists(cd): shutil.rmtree(cd)
     meta, n = Layers(a.work, pj, brand, bdir, a.clip, theme, cd).build(a.jobs); log(f"{n} layers in {time.time()-t:.0f}s")
@@ -343,8 +403,10 @@ def cmd_make(a):
         for p in render(cd, src, mw, None, dump=[float(x) for x in a.dump.split(",")]): log("still:", p)
         return
     outd = os.path.join(a.work, "out"); os.makedirs(outd, exist_ok=True)
-    outf = next_name(os.path.join(outd, f"{a.clip}_{theme}_16x9.mp4"))
-    render(cd, src, mw, outf, crf=a.crf, log=log); log(f"rendered {outf} in {time.time()-t:.0f}s")
+    q = "master" if getattr(a, "master", False) else "share"   # v1.2: one encode straight to the small shareable file
+    outf = next_name(os.path.join(outd, f"{a.clip}_{theme}{'_master' if q == 'master' else ''}.mp4"))
+    render(cd, src, mw, outf, crf=getattr(a, "crf", None), log=log, quality=q)
+    log(f"rendered {outf} ({os.path.getsize(outf) / 1e6:.1f} MB) in {time.time()-t:.0f}s")
     r = check(outf, os.path.join(outd, "stills"), os.path.splitext(os.path.basename(outf))[0], meta["caption_text"], clip_dir=cd)
     if not r["ok"]:   # QA gate: a failed clip is renamed so it can never be delivered by mistake
         bad = os.path.splitext(outf)[0] + "_QA_FAILED.mp4"; os.replace(outf, bad); r["file"] = bad; outf = bad
@@ -363,7 +425,16 @@ def cmd_brand_logo(a):
     prof, notes = from_file(a.file, os.path.abspath(a.out), a.name); log(json.dumps({k: prof[k] for k in ("brand_name", "colors", "default_theme", "logo")}, indent=1))
     log("notes: " + "; ".join(notes)); log("profile: " + os.path.join(os.path.abspath(a.out), "brand_profile.json"))
 
+def ensure_demo():
+    """The demo voice (only for sample and space-preview) is built on first use, not at install."""
+    d = os.path.join(KIT, "demo")
+    if all(os.path.exists(os.path.join(d, f)) for f in ("demo_voice.m4a", "demo_transcript.json")): return True
+    log("building the demo voice once (about a minute)")
+    r = subprocess.run(["bash", os.path.join(d, "build", "build_demo.sh")], cwd=KIT)
+    return r.returncode == 0
+
 def cmd_sample(a):
+    if not ensure_demo(): log("SAMPLE FAILED: could not build the demo voice"); return 3
     brand_p = os.path.abspath(a.brand); brand = json.load(open(brand_p))
     slug = "".join(ch if ch.isalnum() else "-" for ch in brand.get("brand_name", "brand").lower()).strip("-") or "brand"
     work = os.path.abspath(a.work or f"/workspace/audiograms/sample-{slug}"); os.makedirs(work, exist_ok=True)
@@ -377,7 +448,7 @@ def cmd_sample(a):
                                     "accent_words": ["conversation", "clip", "lands", "frame", "gold"], "drops": [], "fixes": [], "payoff_words": 0}}},
               open(os.path.join(work, "project.json"), "w"), indent=1)
     theme = a.theme or brand.get("default_theme", "dark")
-    base = dict(work=work, clip="sample", theme=theme, crf=12, jobs=6, remaster=False, allow_initials=True)   # demo guest has no photo
+    base = dict(work=work, clip="sample", theme=theme, crf=None, jobs=6, remaster=False, allow_initials=True)   # demo guest has no photo
     if cmd_make(argparse.Namespace(**base, dump="9.2")): log("SAMPLE FAILED: layout check failed, see above"); return 3
     still = os.path.join(work, "build", "sample", theme, "ref_009.20.png")
     os.makedirs(os.path.join(work, "out"), exist_ok=True); dst = os.path.join(work, "out", f"sample_{theme}_still.png"); shutil.copy(still, dst)
@@ -404,6 +475,7 @@ def cmd_space_preview(a):
     host's name and handle, the Space title and date in the top bar, host and co-host in the footer, the user's brand
     (or colours from the host's photo with the host's name as a text wordmark) and a placeholder caption."""
     from lib.brand import from_photo
+    if not ensure_demo(): log("PREVIEW FAILED: could not build the demo voice"); return 3
     work = a.work; os.makedirs(work, exist_ok=True); info = None
     if a.space:
         m = SPACE_RE.search(a.space); url = f"https://x.com/i/spaces/{m.group(1)}" if m else a.space.strip()
@@ -453,12 +525,25 @@ def cmd_space_preview(a):
                                      "payoff": False, "phrase_words": [4, 12]}}}, open(os.path.join(pv, "project.json"), "w"), indent=1)
     brand = json.load(open(brand_p)); theme = a.theme or brand.get("default_theme", "dark")
     T = round(words[2]["s"] + 0.12, 2)   # "Your best" spoken, "moments" lit: the first few words read as highlighted
-    r = cmd_make(argparse.Namespace(work=pv, clip="preview", theme=theme, crf=12, jobs=a.jobs, remaster=False, dump=str(T)))
+    r = cmd_make(argparse.Namespace(work=pv, clip="preview", theme=theme, crf=None, jobs=a.jobs, remaster=False, dump=str(T)))
     if r: log("PREVIEW FAILED: see above"); return r
     still = os.path.join(pv, "build", "preview", theme, f"ref_{T:06.2f}.png")
     dst = os.path.abspath(a.out) if a.out else os.path.join(work, "out", f"space_preview_{theme}.png")
     os.makedirs(os.path.dirname(dst), exist_ok=True); shutil.copy(still, dst)
     log("PREVIEW READY: " + dst + "  (look at it before sending)")
+
+def cmd_publish(a):
+    """Upload to the user's own storage and print ONE link (player page with Download, or the raw file URL)."""
+    from lib import publish as P
+    try:
+        if a.check: P.check(log=log); return 0
+        if a.sweep: P.sweep(log=log, dry=a.dry_run); return 0
+        if a.make_player: P.make_player(a.make_player, log=log); return 0
+        if not a.file: log("usage: publish FILE [--title T] [--json] | --check | --sweep | --make-player DIR"); return 2
+        r = P.publish(a.file, a.title or "", log=log)
+        print(json.dumps(r, indent=1) if a.json else r["link"]); return 0
+    except P.PublishError as e:
+        log(f"PUBLISH FAILED: {e}"); return 2
 
 def cmd_check(a):
     """Re-run the full QA gate on an existing render (layout checks need --clip and --theme)."""
@@ -478,10 +563,13 @@ if __name__ == "__main__":
     p.add_argument("--name"); p.add_argument("--handle")
     p = sp.add_parser("transcribe"); p.add_argument("--work", required=True); p.add_argument("--start", type=float); p.add_argument("--end", type=float)
     p.add_argument("--clip"); p.add_argument("--model", default="small.en")
+    p.add_argument("--chunk", type=float, default=600, help="seconds per chunk; CHUNK READY is logged after each (0 = one pass)")
+    p.add_argument("--batch", type=int, default=1, help="experimental: faster-whisper batched pipeline batch size (1 = sequential, the tested default)")
     p = sp.add_parser("speakers"); p.add_argument("--work", required=True)
     p = sp.add_parser("quote"); p.add_argument("--work", required=True); p.add_argument("--clip", required=True)
     p = sp.add_parser("make"); p.add_argument("--work", required=True); p.add_argument("--clip", required=True); p.add_argument("--theme", choices=["dark", "light"])
-    p.add_argument("--crf", type=int, default=12); p.add_argument("--jobs", type=int, default=6); p.add_argument("--remaster", action="store_true")
+    p.add_argument("--crf", type=int, help="override the x264 CRF (default 23 share, 12 master)"); p.add_argument("--jobs", type=int, default=6); p.add_argument("--remaster", action="store_true")
+    p.add_argument("--master", action="store_true", help="archival encode (CRF 12, AAC 320k) instead of the default small shareable file")
     p.add_argument("--dump", help="comma separated seconds: write exact stills instead of a video (fast design preview)")
     p = sp.add_parser("brand-from-url"); p.add_argument("url"); p.add_argument("--out", required=True)
     p = sp.add_parser("brand-from-logo"); p.add_argument("file"); p.add_argument("--out", required=True); p.add_argument("--name")
@@ -491,10 +579,14 @@ if __name__ == "__main__":
     p.add_argument("--brand", help="brand_profile.json; omit to take colours from the host's photo"); p.add_argument("--space-title"); p.add_argument("--date")
     p.add_argument("--host"); p.add_argument("--host-name"); p.add_argument("--host-pfp"); p.add_argument("--cohost"); p.add_argument("--cohost-name")
     p.add_argument("--cohost-pfp"); p.add_argument("--theme", choices=["dark", "light"]); p.add_argument("--out"); p.add_argument("--jobs", type=int, default=6)
+    p = sp.add_parser("publish"); p.add_argument("file", nargs="?"); p.add_argument("--title"); p.add_argument("--json", action="store_true")
+    p.add_argument("--check", action="store_true", help="test the user's storage: config, credentials, upload, public read, list, delete")
+    p.add_argument("--sweep", action="store_true", help="delete clips older than ttl_hours (run from a routine every 30 minutes)")
+    p.add_argument("--dry-run", action="store_true"); p.add_argument("--make-player", metavar="DIR", help="write the static player page for the user's hosting")
     p = sp.add_parser("check"); p.add_argument("--work", required=True); p.add_argument("file"); p.add_argument("--clip")
     p.add_argument("--theme", choices=["dark", "light"])
     a = ap.parse_args()
     if getattr(a, "work", None): a.work = os.path.abspath(a.work)
     sys.exit({"doctor": cmd_doctor, "init": cmd_init, "fetch": cmd_fetch, "pfp": cmd_pfp, "transcribe": cmd_transcribe, "speakers": cmd_speakers, "quote": cmd_quote,
               "make": cmd_make, "check": cmd_check, "brand-from-url": cmd_brand_url,
-              "brand-from-logo": cmd_brand_logo, "sample": cmd_sample, "space-preview": cmd_space_preview}[a.cmd](a) or 0)
+              "brand-from-logo": cmd_brand_logo, "sample": cmd_sample, "space-preview": cmd_space_preview, "publish": cmd_publish}[a.cmd](a) or 0)

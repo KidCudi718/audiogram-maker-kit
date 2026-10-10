@@ -4,16 +4,29 @@
   "logo": {
     "on_dark": "assets/lumora-logo-on-dark.svg",
     "on_light": "assets/lumora-logo-on-light.svg",
-    "mark": "assets/lumora-mark.svg"
+    "mark": "",
+    "style": "none",
+    "style_dark": "none",
+    "style_light": "none",
+    "dark_mode": "original",
+    "light_mode": "original",
+    "title_size": 22
   },
   "colors": {
     "accent": "#FFB547",
     "primary": "#5B3FD9",
-    "background_dark": "#1B1040",
-    "background_light": "#FAF8F5"
+    "background_dark": "#0E0E10",
+    "background_light": "#DCDCDE",
+    "glow_dark": "#8A8A90",
+    "glow_light": "#FFFFFF",
+    "edge_dark": "#FFFFFF",
+    "edge_light": "#000000"
   },
   "default_theme": "dark",
-  "font": {"family": "Inter", "file": ""},
+  "font": {
+    "family": "Inter",
+    "file": ""
+  },
   "link": "lumora.example/listen",
   "promo_code": "LISTEN20",
   "footer": {
@@ -21,14 +34,42 @@
     "code_label": "Code:",
     "button_text": "",
     "hosts_label": "Hosts",
-    "footer_text": "New episodes every Tuesday"
+    "footer_text": "",
+    "host_names": true,
+    "photo_size": 56,
+    "align": "center"
   },
   "hosts": [
-    {"name": "Ava Reyes", "handle": "@ava_example", "img": ""},
-    {"name": "Kai Moreno", "handle": "@kai_example", "img": ""}
+    {
+      "name": "Ava Reyes",
+      "handle": "@ava_example",
+      "img": ""
+    },
+    {
+      "name": "Kai Moreno",
+      "handle": "@kai_example",
+      "img": ""
+    }
   ],
-  "spelling": ["Lumora"],
-  "captions": {"size": "medium", "weight": 600, "highlight": "underline", "phrase_words": [4, 8]},
-  "format": {"aspect": "16:9"},
-  "delivery": {"destination": "chat", "drive_folder_id": ""}
+  "spelling": [
+    "Lumora"
+  ],
+  "captions": {
+    "size": 84,
+    "weight": 650,
+    "highlight": "underline",
+    "phrase_words": [
+      4,
+      8
+    ]
+  },
+  "format": {
+    "aspect": "16:9"
+  },
+  "brand_mark": "assets/lumora-mark-on-dark.svg",
+  "layout": {
+    "chipy": 352,
+    "capy": 438,
+    "capmaxh": 420
+  }
 }

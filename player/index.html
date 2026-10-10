@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#0e0f11">
+<meta name="robots" content="noindex">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'unsafe-inline'; style-src 'unsafe-inline'; media-src __MEDIA_ORIGIN__; img-src 'self' data:; base-uri 'none'; form-action 'none'">
+<meta name="referrer" content="no-referrer">
+<title>Audiogram clip</title>
+<meta property="og:title" content="Audiogram clip">
+<meta property="og:description" content="Watch and download this clip.">
+<style>
+  :root{color-scheme:dark}
+  *{box-sizing:border-box}
+  html,body{margin:0;background:#0e0f11;color:#f2f3f5;font:16px/1.4 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;-webkit-text-size-adjust:100%}
+  main{min-height:100svh;display:flex;flex-direction:column;justify-content:center;gap:18px;max-width:880px;margin:0 auto;padding:max(20px,env(safe-area-inset-top)) 16px max(24px,env(safe-area-inset-bottom))}
+  h1{font-size:clamp(18px,4.6vw,26px);font-weight:650;letter-spacing:-.01em;margin:0 2px;word-break:break-word}
+  .frame{position:relative;width:100%;aspect-ratio:16/9;background:#000;border-radius:14px;overflow:hidden;box-shadow:0 10px 40px rgba(0,0,0,.5)}
+  video{position:absolute;inset:0;width:100%;height:100%;background:#000}
+  .btn{display:flex;align-items:center;justify-content:center;gap:10px;width:100%;min-height:56px;border-radius:14px;background:#f2f3f5;color:#0e0f11;font-weight:700;font-size:18px;text-decoration:none;-webkit-tap-highlight-color:transparent}
+  .btn:active{transform:scale(.99);opacity:.9}
+  .btn svg{width:22px;height:22px}
+  .hint{color:#8a8f98;font-size:13px;text-align:center;margin:0}
+  .err{color:#ff8a8a;text-align:center}
+  .note{margin:0;padding:12px 14px;border-radius:12px;background:#1b1d21;color:#e9c46a;font-size:14px;text-align:center}
+  .gone{padding:48px 16px;border-radius:14px;background:#16181b;text-align:center}
+  .gone-t{font-size:20px;font-weight:650;margin-bottom:6px}
+  [hidden]{display:none!important}
+</style>
+</head>
+<body>
+<main>
+  <h1 id="title">Audiogram clip</h1>
+  <div class="frame" id="frame" hidden><video id="v" controls playsinline preload="metadata"></video></div>
+  <a class="btn" id="dl" hidden download>
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></svg>
+    Download
+  </a>
+  <p class="note" id="note" hidden>This link expires soon. Download now to keep it.</p>
+  <p class="hint" id="hint" hidden>On iPhone, open the download from Files and tap Share, then Save Video.</p>
+  <div class="gone" id="gone" hidden><div class="gone-t">This clip has expired</div><div class="hint">Clip links are temporary. Ask for a fresh link.</div></div>
+  <p class="err" id="err" hidden>This clip link isn't valid.</p>
+</main>
+<script src="config.js"></script>
+<script>
+if (window.top !== window.self) { try { window.top.location = window.location.href; } catch(_) { document.documentElement.innerHTML = ""; } }
+(function(){
+  // Only clips from the user's own bucket (config.js, written by `audiogram.py publish --make-player`) are shown.
+  var CFG = window.AG || {}; var BASE = CFG.media_base || ""; var TTL = CFG.ttl_hours || 2;
+  if (!BASE) { document.getElementById("err").hidden = false; return; }
+  var $ = function(id){return document.getElementById(id)};
+  var q = new URLSearchParams(location.search);
+  var m = (q.get("c") || "").match(/^([A-Za-z0-9][A-Za-z0-9_-]{0,180})$/);
+  if(!m){ $("err").hidden=false; return; }
+  var id = m[1], src = BASE + id + ".mp4";
+  var t = (q.get("t") || "").slice(0,140).trim();
+  if(!t){ t = id.replace(/^\d{8}-[0-9a-f]{8}-/,"").replace(/_(chat|v\d+|16x9|9x16|1x1)\b/g,"").replace(/[_-]+/g," ").trim(); }
+  var nice = (t.replace(/[^A-Za-z0-9]+/g,"-").replace(/^-|-$/g,"").toLowerCase() || "clip").slice(0,80) + ".mp4";
+  $("title").textContent = t; document.title = t;
+  var e = parseInt(q.get("e") || "", 10);
+  if (e > 0) {
+    var exp = new Date(e * 1000);
+    var hm = exp.toLocaleTimeString([], {hour:"numeric", minute:"2-digit"});
+    $("note").textContent = "This link expires at " + hm + ". Download now to keep it.";
+  }
+  var expired = function(){ $("title").hidden=true; document.title="Clip expired"; $("frame").hidden=true; $("dl").hidden=true; $("note").hidden=true; $("hint").hidden=true; $("gone").hidden=false; };
+  if (e > 0 && Date.now() > e * 1000) { expired(); return; }
+  var v = $("v"); v.src = src + "#t=0.1";
+  var a = $("dl"); a.href = src;   // the file is stored with Content-Disposition: attachment, so this downloads; the player still streams it;
+  v.addEventListener("error", expired);
+  $("frame").hidden=false; a.hidden=false; $("note").hidden=false; $("hint").hidden=false;
+})();
+</script>
+</body>
+</html>

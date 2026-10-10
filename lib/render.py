@@ -10,8 +10,10 @@ Rules baked in (do not change without the user asking):
   * Payoff takeover: the speaker photo, ring, glow, name chip, last caption and watermark fade fully to 0 in the 0.35 s
     before the payoff (never while a caption word is still lit), then the payoff line fades in 0.05 s after its first
     word starts, on a clean background with nothing behind it.
-  * Export: 1920x1080 30 fps, x264 preset slow, CRF 12, tune film, deblock -1,-1, aq-strength 0.8, yuv420p, AAC 320k 48 kHz,
-    +faststart. Audio is the mastered WAV (-14 LUFS / -1 dBTP).
+  * Export (v1.2 default, "share"): ONE encode straight to the small shareable file: 1920x1080 30 fps, x264 preset slow,
+    CRF 23, maxrate 3M, bufsize 6M, yuv420p, BT.709, AAC 160k 48 kHz, +faststart (about 6 to 7 MB for 35 s).
+    quality="master" keeps the old archival encode (CRF 12, tune film, AAC 320k) for users who ask for it.
+    Audio is the mastered WAV (-14 LUFS / -1 dBTP).
   * Speed: frames are drawn by several worker processes in parallel and fed to x264 in order. Same pixels, faster."""
 import os, json, math, subprocess
 from collections import deque
@@ -50,7 +52,10 @@ def payoff_timing(TLJ):
     ts = round(HS + HERO_TEXT_DELAY, 3)
     return round(fs, 3), min(round(fe, 3), math.floor((ts - 1 / 30) * 1000) / 1000), ts   # rounding never lets the fade end late
 
-def render(clip_dir, source_audio, master_wav, outf, t0=0.0, t1=None, dump=None, crf=12, threads=0, workers=None, log=print):
+ENC = {"share": dict(v=["-preset", "slow", "-crf", "23", "-maxrate", "3M", "-bufsize", "6M"], a="160k"),
+       "master": dict(v=["-preset", "slow", "-crf", "12", "-tune", "film"], a="320k")}
+
+def render(clip_dir, source_audio, master_wav, outf, t0=0.0, t1=None, dump=None, crf=None, threads=0, workers=None, log=print, quality="share"):
     TLJ = json.load(open(os.path.join(clip_dir, "timeline.json"))); G = TLJ["geometry"]; TL = TLJ["timeline"]; PAL = TLJ["palette"]
     ST, DUR = TLJ["start"], TLJ["dur"]; TURNS = [tuple(x) for x in TLJ["turns"]]; SPK = TLJ["speakers"]
     LY = os.path.join(clip_dir, "layers"); LIGHT = TLJ["theme"] == "light"
@@ -186,6 +191,8 @@ def render(clip_dir, source_audio, master_wav, outf, t0=0.0, t1=None, dump=None,
     else:
         ain = ["-ss", f"{ST + t0:.3f}", "-t", f"{max(0.05, T1 - t0):.3f}", "-i", source_audio]; log("audio: RAW (no master found)")
     global _PRODUCE
+    venc = list(ENC[quality]["v"])
+    if crf is not None: venc[venc.index("-crf") + 1] = str(crf)   # explicit --crf still wins
     _PRODUCE = lambda F: finish(frame(F / FPS), F).tobytes()
     nw = workers or max(1, min(8, (os.cpu_count() or 2) - 2))
     pool = None
@@ -195,10 +202,10 @@ def render(clip_dir, source_audio, master_wav, outf, t0=0.0, t1=None, dump=None,
         except Exception as ex: log(f"parallel frames unavailable ({ex}), drawing in one process"); pool = None
     ff = subprocess.Popen(["ffmpeg", "-v", "error", "-y", "-f", "rawvideo", "-pix_fmt", "rgb24", "-s", f"{Wd}x{Ht}", "-r", str(FPS), "-i", "-",
         *ain, "-map", "0:v", "-map", "1:a", "-af", "apad", "-vf", VF,
-        "-c:v", "libx264", "-preset", "slow", "-crf", str(crf), "-tune", "film", "-pix_fmt", "yuv420p", *(["-threads", str(threads)] if threads else []),
+        "-c:v", "libx264", *venc, "-pix_fmt", "yuv420p", *(["-threads", str(threads)] if threads else []),
         "-x264-params", "deblock=-1,-1:aq-mode=1:aq-strength=0.8:colorprim=bt709:transfer=bt709:colormatrix=bt709:range=tv",
         "-colorspace", "bt709", "-color_primaries", "bt709", "-color_trc", "bt709", "-color_range", "tv",
-        "-c:a", "aac", "-b:a", "320k", "-ar", "48000", "-ac", "2", "-movflags", "+faststart", "-shortest", outf], stdin=subprocess.PIPE)
+        "-c:a", "aac", "-b:a", ENC[quality]["a"], "-ar", "48000", "-ac", "2", "-movflags", "+faststart", "-shortest", outf], stdin=subprocess.PIPE)
     F0, F1 = int(round(t0 * FPS)), int(round(T1 * FPS))
     try:
         if pool:

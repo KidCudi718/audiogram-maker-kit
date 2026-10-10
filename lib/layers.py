@@ -13,9 +13,10 @@ from . import words as W
 from .theme import palette, mix, on
 
 KIT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-G = dict(cx=390, cy=505, P=380, capx=820, capr=1810, chipy=286, capy=372, pill=(160, 946, 1760, 1034), progy=912, herocy=505,
-         capmaxh=500, heromaxh=700, safe=(96, 54, 1824, 1026))   # safe = 5 percent title safe area for all text
-SIZES = dict(small=60, medium=68, large=76)
+G = dict(cx=390, cy=505, P=380, capx=820, capr=1810, chipy=352, capy=438, pill=(160, 946, 1760, 1034), progy=912, herocy=505,
+         capmaxh=420, heromaxh=700, safe=(96, 54, 1824, 1026))   # safe = 5 percent title safe area for all text
+SIZES = dict(small=60, medium=68, large=76)   # named sizes; the v1.2 default is 84 px (CAP_PX)
+CAP_PX, CAP_WEIGHT = 84, 650
 
 def chrome_bin():
     for b in ("google-chrome", "google-chrome-stable", "chromium", "chromium-browser"):
@@ -58,16 +59,26 @@ const ws=Array.from(nx.querySelectorAll('.w'));while(lines(nx)>1&&ws.length>2){w
 if(lines(nx)>1||nx.querySelectorAll('.w').length<2)nx.remove();});
 </script>"""
 
+def host_row(brand, brand_dir):
+    """Footer Hosts row when the project has none: the brand mark first (as given, never recolored), then brand.hosts."""
+    row = []
+    bm = brand.get("brand_mark") or ""
+    if bm:
+        p = bm if os.path.isabs(bm) else os.path.join(brand_dir, bm)
+        if os.path.exists(p): row.append({"name": brand.get("brand_name", ""), "handle": brand.get("brand_handle", ""), "img": p, "mark": True})
+    return row + list(brand.get("hosts") or [])
+
 class Layers:
     def __init__(self, project_dir, project, brand, brand_dir, clip_id, theme, out_dir):
         self.pd, self.pj, self.br, self.bd, self.cid, self.theme = project_dir, project, brand, brand_dir, clip_id, theme
         self.clip = project["clips"][clip_id]; self.T = palette(brand, theme)
+        G.update({k: v for k, v in (brand.get("layout") or {}).items() if k in G})   # optional per brand geometry overrides (chipy, capy, ...)
         out_dir = os.path.abspath(out_dir); self.CD = out_dir; self.OUT = os.path.join(out_dir, "layers"); self.HT = os.path.join(out_dir, "html")
         self.CACHE = os.path.join(os.path.dirname(out_dir), ".layer_cache")   # survives re-renders: identical HTML is never drawn twice
         os.makedirs(self.OUT, exist_ok=True); os.makedirs(self.HT, exist_ok=True); os.makedirs(self.CACHE, exist_ok=True)
         cap = brand.get("captions", {})
-        self.px = SIZES.get(cap.get("size", "medium"), 68) if not isinstance(cap.get("size"), int) else cap["size"]
-        self.weight = int(cap.get("weight", 600)); self.hl = cap.get("highlight", "underline")
+        self.px = SIZES.get(cap.get("size"), CAP_PX) if not isinstance(cap.get("size"), int) else cap["size"]
+        self.weight = int(cap.get("weight", CAP_WEIGHT)); self.hl = cap.get("highlight", "underline")
         self.acc = {W.norm_tok(k) for k in self.clip.get("accent_words", [])}
         font = brand.get("font", {}) or {}
         ff = font.get("file"); ffp = None
@@ -82,7 +93,7 @@ class Layers:
         ep = project.get("episode", {})
         self.title = ep.get("title", ""); self.sub = ep.get("subtitle", "")
         ft = brand.get("footer", {})
-        self.hosts = ep.get("hosts", brand.get("hosts", [])) or []
+        self.hosts = ep.get("hosts") or host_row(brand, brand_dir)
         self.ft = ft
 
     def img(self, person, cls, size):
@@ -166,9 +177,12 @@ class Layers:
     def ui(self, spk):
         T = self.T; p = self.people[spk]; x0, y0, x1, y1 = G["pill"]; ft = self.ft
         lg = self.br.get("logo", {}); th = self.theme
-        style = lg.get(f"style_{th}", lg.get("style", "wordmark"))   # per style choice from brand-from-url / brand-from-logo
+        style = lg.get(f"style_{th}", lg.get("style", "none"))   # v1.2 default: no logo in the top bar (the brand mark leads the Hosts row)
         logo = None if style == "text" else (resolve(self.bd, lg.get(f"on_{th}")) or (None if f"style_{th}" in lg else resolve(self.bd, T["logo"])))
-        hosts = "".join(f'<div class="h">{self.img(h, "hi", 48)}<span>{html.escape(h.get("handle") or h.get("name",""))}</span></div>' for h in self.hosts)
+        has_cta = bool(self.br.get("link") or self.br.get("promo_code") or ft.get("button_text"))
+        hn = bool(ft.get("host_names", True)) and not has_cta   # name and handle per host (v1.2 default); handles only when a link or code shares the bar
+        hosts = "".join(f'<div class="h">{self.img(h, "hi hm" if h.get("mark") else "hi", 48)}' + (f'<span><b>{html.escape(h.get("name",""))}</b><em>{html.escape(h.get("handle",""))}</em></span>' if hn and h.get("name")
+                        else f'<span>{html.escape(h.get("handle") or h.get("name",""))}</span>') + '</div>' for h in self.hosts)
         left = (f'<span class="lbl">{html.escape(ft.get("hosts_label","Hosts"))}</span>{hosts}' if self.hosts
                 else f'<span class="ftxt" data-fit="0,0,14">{html.escape(ft.get("footer_text",""))}</span>')
         code = self.br.get("promo_code"); btn = (f'{html.escape(ft.get("code_label","Code:"))} {html.escape(code)}' if code
@@ -177,23 +191,26 @@ class Layers:
                + (f'<div class="code">{btn}</div>' if btn else ""))
         brandname = html.escape(self.br.get("brand_name", ""))
         mode = lg.get("dark_mode" if self.theme == "dark" else "light_mode", "original")
-        filt = {"white": "filter:brightness(0) invert(1);", "dark": f"filter:brightness(0);opacity:.88;"}.get(mode, "")
-        self.logo_style = "text" if not logo else style
+        filt = ""   # logos are never recolored (v1.2): dark_mode / light_mode other than "original" are ignored
+        self.logo_style = "none" if style == "none" else ("text" if not logo else style)
         if logo and style == "icon":
             logo_html = f'<div class="lgrp"><img class="logoi" style="{filt}" src="{logo}"><div class="wm">{brandname}</div></div>'
         elif logo: logo_html = f'<img class="logo" style="{filt}" src="{logo}">'
         else: logo_html = f'<div class="wm" data-fit="0,0,18">{brandname}</div>'
+        if style == "none": logo_html = ""   # optional: no logo in the top bar (title only)
         if not self.br.get("link"): cta = (f'<div class="code">{btn}</div>' if btn else "")
+        logo_h = int(lg.get("height", 40))   # only used when a brand opts back into a top-bar logo (style wordmark / icon / text)
+        top_h = max(46, logo_h + 6); top_y = 56; rule_y = 124 if top_h == 46 else top_y + top_h + 16
         css = f""".edge{{position:absolute;inset:22px;border-radius:28px;padding:1.5px;background:linear-gradient(135deg,{T['edge']});
  -webkit-mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);-webkit-mask-composite:xor;mask-composite:exclude}}
-.top{{position:absolute;left:96px;right:96px;top:56px;height:46px;display:flex;justify-content:space-between;align-items:center;gap:40px}}
-.logo{{height:40px;max-width:420px;object-fit:contain;flex:none}} .wm{{font-size:30px;font-weight:800;letter-spacing:-.5px;color:{T['ink']};white-space:nowrap;
+.top{{position:absolute;left:96px;right:96px;top:{top_y}px;height:{top_h}px;display:flex;justify-content:space-between;align-items:center;gap:40px}}
+.logo{{height:{logo_h}px;max-width:420px;object-fit:contain;flex:none}} .wm{{font-size:30px;font-weight:800;letter-spacing:-.5px;color:{T['ink']};white-space:nowrap;
  max-width:520px;overflow:hidden;flex:none}}
 .lgrp{{display:flex;align-items:center;gap:14px;flex:none}} .logoi{{height:44px;width:44px;object-fit:contain;border-radius:10px;flex:none}}
 .tt{{font-size:20px;font-weight:600;letter-spacing:.2px;color:{T['ink2']};display:flex;align-items:center;gap:12px;white-space:nowrap;min-width:0;
  overflow:hidden;flex:0 1 auto}}
 .tt b{{font-weight:700;color:{T['ink']}}} .tt em{{font-style:normal;color:{T['mute']}}} .tt i{{width:8px;height:8px;border-radius:50%;background:{T['dot']}}}
-.rule{{position:absolute;left:86px;right:86px;top:124px;height:1px;background:linear-gradient(90deg,transparent,{T['rule']} 15%,{T['rule']} 85%,transparent)}}
+.rule{{position:absolute;left:86px;right:86px;top:{rule_y}px;height:1px;background:linear-gradient(90deg,transparent,{T['rule']} 15%,{T['rule']} 85%,transparent)}}
 .pill{{position:absolute;left:{x0}px;top:{y0}px;width:{x1-x0}px;height:{y1-y0}px;border-radius:{(y1-y0)/2}px;background:{T['pillbg']};border:1px solid {T['pillbd']};
  box-shadow:{T['pillsh']};display:flex;align-items:center;justify-content:space-between;padding:0 14px 0 26px}}
 .hosts{{display:flex;align-items:center;gap:22px;flex:1 1 auto;min-width:0;overflow:hidden;white-space:nowrap}} .lbl{{font-size:12px;font-weight:700;letter-spacing:4px;text-transform:uppercase;color:{T['lbl']}}}
@@ -209,9 +226,17 @@ class Layers:
  max-width:{G['capr']-G['capx']}px;white-space:nowrap;overflow:hidden;
  background:{T['chipbg']};border:1px solid {T['chipbd']};font-size:24px;font-weight:700;color:{T['ink']}}}
 .chip i{{width:9px;height:9px;border-radius:50%;background:{T['dot']}}} .chip span{{font-weight:500;color:{T['mute']}}}"""
+        hp_ = int(ft.get("photo_size", 56))
+        css += f""".hi{{width:{hp_}px;height:{hp_}px}} .hm{{object-fit:contain}} .h span b{{font-weight:700;color:{T['ink']}}} .h span em{{font-style:normal;font-weight:500;color:{T['mute']};margin-left:8px}}"""
+        if ft.get("align", "center") == "center" and not cta: css += ".pill{justify-content:center} .hosts{flex:0 1 auto;gap:34px}"
+        tsz = lg.get("title_size")
+        if style == "none":   # title alone: bigger title on the left, subtitle on the right
+            css += f".tt{{flex:1 1 auto;justify-content:space-between;font-size:{int(tsz or 22)}px}} .tt .sub{{font-weight:500;color:{T['mute']}}} .tt b{{display:flex;align-items:center;gap:14px}}"
+
         sub = f'<em>·</em>{html.escape(self.sub)}' if self.sub else ""
+        if self.logo_style == "none": sub = f'<span class="sub">{html.escape(self.sub)}</span>' if self.sub else ""
         handle = f'<span>{html.escape(p.get("handle",""))}</span>' if p.get("handle") else ""
-        body = f"""<div class="top">{logo_html}<div class="tt" data-fit="0,0,13"><i></i><b>{html.escape(self.title)}</b>{sub}</div></div>
+        body = f"""<div class="top">{logo_html}<div class="tt" data-fit="0,0,13">{('<b><i></i>' + html.escape(self.title) + '</b>') if self.logo_style == "none" else ('<i></i><b>' + html.escape(self.title) + '</b>')}{sub}</div></div>
 <div class="rule"></div>
 <div class="chip" data-fit="0,0,16"><i></i>{html.escape(p['name'])}{handle}</div>
 <div class="pill"><div class="hosts">{left}</div><div class="cta">{cta}</div></div>
@@ -288,7 +313,7 @@ class Layers:
         ST, EN, DUR = W.clip_window(self.clip)
         mn, mx = self.clip.get("phrase_words") or self.br.get("captions", {}).get("phrase_words", [4, 8])
         phs = W.build_phrases(ws, self.clip, mn, mx); tt = W.times(phs, DUR)
-        payoff = self.clip.get("payoff", True)
+        payoff = self.clip.get("payoff", (self.br.get("clip") or {}).get("payoff", True))
         H = W.payoff_index(phs) if payoff else -1
         spks = list(dict.fromkeys(w["spk"] for w in ws))
         with cf.ThreadPoolExecutor(3) as ex: list(ex.map(lambda j: self.shot(*j), [("bg", self.bg(), False), ("bg_clean", self.bg(False), False), ("bloom", self.bloom(), True)]))

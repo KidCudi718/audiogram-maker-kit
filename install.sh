@@ -24,8 +24,7 @@ if [ ! -s fonts/Inter-Variable.ttf ]; then
   echo "font ready"
 fi
 
-# Demo voice for the first run sample (synthetic, CC0). Built once with Piper in its own venv.
-if [ ! -s demo/demo_voice.m4a ] || [ ! -s demo/demo_transcript.json ]; then bash demo/build/build_demo.sh; fi
+# The demo voice (only used by `sample` and `space-preview`) is no longer built here: it is built on first use.
 
 
 # Speech model for real recordings (about 500 MB, once)
