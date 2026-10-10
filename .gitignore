@@ -1,0 +1,5 @@
+__pycache__/
+fonts/*.ttf
+demo/demo_voice.m4a
+demo/demo_voice.wav
+demo/demo_transcript.json
