@@ -514,7 +514,7 @@ def photo_accent(path):
         for c, share, s, l in cols:
             hh = hsl(c)[0]
             if s < 0.12 or not (0.10 <= l <= 0.90) or share < 0.015: continue
-            if prefer_non_skin and SKIN[0] <= hh <= SKIN[1]: continue
+            if prefer_non_skin and SKIN[0] <= hh <= SKIN[1] and s < 0.75: continue   # skin is never this saturated: a vivid orange is a real colour
             sc.append((share * (0.3 + s), c))
         if sc: best = max(sc)[1]; break
     if not best:   # black and white photo: fall back to a clean electric blue

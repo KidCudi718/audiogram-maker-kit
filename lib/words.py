@@ -82,14 +82,14 @@ def load_words(project_dir, project, brand, clip_id, report=None):
 SOFT = set("a an the and or but so to of in on at for with from by as that is are was were be i we you they it my our your their this these those have has had".split())
 
 DANGLE = SOFT | set("will would can could should shall may might must just very into about than if not do does did am been "
-                     "being because when which who what where how".split())
+                     "being because when which who what where how cannot can't won't don't doesn't didn't isn't".split())
 
 def _split_score(ph, j, n):
     w = ph[j - 1]["w"]; nx = ph[j]["w"].lower().strip(",.")
     sc = -0.45 * abs(j - n / 2)
     if re.search(r"[,;:]$", w): sc += 3
     elif nx in SOFT | {"like", "because", "but", "so", "when", "which", "who"} and w.lower().strip(",.") not in SOFT: sc += 1.2
-    if w.lower().strip(",.") in SOFT: sc -= 1.5
+    if w.lower().strip(",.") in SOFT and not re.search(r"[,;:.?!]$", w): sc -= 1.5   # "is," before a comma is a natural break
     return sc
 
 def _split(ph, mn, mx):
@@ -163,5 +163,8 @@ def build_phrases(ws, clip, mn=4, mx=8):
         k = len(ws)
         while k > 0 and not (k < len(ws) and re.search(r"[.?!]$", ws[k - 1]["w"])): k -= 1
         if 0 < len(ws) - k <= 12 and k > 0: n = len(ws) - k
+        elif len(ws) - k > 12:   # long last sentence: the payoff is its last clause (after the last comma), never a fragment
+            for j in range(k + 1, len(ws) - 3):
+                if re.search(r"[,;:]$", ws[j - 1]["w"]) and len(ws) - j <= 12: n = len(ws) - j; break
     if n and n < len(ws): phs = phrases(ws[:-n], mn, mx) + [ws[-n:]]
     return phs

@@ -262,8 +262,11 @@ class Layers:
 
     def words_html(self, ph, cur, spoken):
         k = W.key_index(ph, self.acc)
-        return " ".join(f'<span class="w {"c" if i==cur else ("s" if i<spoken else "u")}{" k" if i==k else ""}">{html.escape(w["w"])}</span>'
-                        for i, w in enumerate(ph))
+        out = ""
+        for i, w in enumerate(ph):   # a line never ends on "the", "will", "of"...: the space after them does not break
+            out += f'<span class="w {"c" if i==cur else ("s" if i<spoken else "u")}{" k" if i==k else ""}">{html.escape(w["w"])}</span>'
+            if i + 1 < len(ph): out += "&nbsp;" if (w["w"].lower() in W.DANGLE and not re.search(r"[,;:.?!]$", w["w"])) else " "
+        return out
 
     def cap(self, ph, cur, sp, nxt):
         px = self.px

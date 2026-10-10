@@ -31,7 +31,10 @@ def log(*a): print(*a, flush=True)
 
 def load_project(work):
     pj = json.load(open(os.path.join(work, "project.json")))
-    bp = pj["brand_profile"]; bp = bp if os.path.isabs(bp) else os.path.join(work, bp)
+    bp = pj.get("brand_profile") or ""
+    if not bp:   # fetch and transcribe work before any brand exists (the setup flow asks about colours while they run)
+        return pj, {}, os.path.abspath(work)
+    bp = bp if os.path.isabs(bp) else os.path.join(work, bp)
     brand = json.load(open(bp))
     return pj, brand, os.path.dirname(os.path.abspath(bp))
 
@@ -176,8 +179,11 @@ def cmd_fetch(a):
     for f in os.listdir(a.work):
         if f.startswith("source.") and f != "source.m4a": os.remove(os.path.join(a.work, f))
     t0 = time.time()
-    r = subprocess.run(["yt-dlp", "--no-warnings", "--retries", "10", "--fragment-retries", "20", "-N", "8", "-f", "bestaudio/best",
-                        "-x", "--audio-format", "m4a", "-o", os.path.join(a.work, "source.%(ext)s"), src])
+    dl_log = os.path.join(a.work, "download.log"); log("downloading the audio (details in download.log)")
+    with open(dl_log, "w") as lf:   # the HLS downloader prints a line per chunk: keep that out of the agent's view
+        r = subprocess.run(["yt-dlp", "--no-warnings", "--retries", "10", "--fragment-retries", "20", "-N", "8", "-f", "bestaudio/best",
+                            "-x", "--audio-format", "m4a", "-o", os.path.join(a.work, "source.%(ext)s"), src], stdout=lf, stderr=subprocess.STDOUT)
+    if r.returncode != 0: log("".join(open(dl_log, errors="ignore").readlines()[-5:]))
     if r.returncode != 0 or not os.path.exists(out):
         log("DOWNLOAD FAILED: update the downloader once (python3 -m pip install --user -U yt-dlp, add --break-system-packages if pip asks)"
             " and try again; if it still fails, ask the user for the replay link or an audio file."); return 2
@@ -204,6 +210,8 @@ def cmd_quote(a):
     segs = W.load_segments(a.work, pj, a.clip)
     after = [w["w"].strip() for s in segs for w in s["words"] if en + 0.05 < w["s"] < en + 20]
     log("Next 20s after the end (check the thought is finished): " + " ".join(after))
+    cut = [w for sg in segs for w in sg["words"] if st - 0.05 <= w["s"] < en - 0.1 and w["e"] > en + 0.15]
+    for w in cut: log(f"WARNING: the end cuts the word '{w['w'].strip()}' (ends at {mmss(w['e'])}): set end to {w['e'] + 0.4:.2f} or later")
     for pat, hit in rep.get("drops", []):
         if not hit: log(f"note: caption drop not matched: {pat}")
 
@@ -219,6 +227,16 @@ def cmd_make(a):
     from lib.master_audio import master
     from lib.check import check
     pj, brand, bdir = load_project(a.work); c = pj["clips"][a.clip]; src = source_path(a.work, pj)
+    if not brand: log("NO BRAND YET: run space-preview (colours from the host's photo) or init --brand BRAND.json first"); return 2
+    def has_photo(per):
+        im = (per or {}).get("img") or ""
+        return bool(im) and (bool(re.match(r"^(https?|data):", im)) or os.path.exists(im if os.path.isabs(im) else os.path.join(a.work, im))
+                             or os.path.exists(os.path.join(bdir, im)))
+    missing = [f"{k} ({pj['people'].get(k, {}).get('name') or k})" for k in dict.fromkeys(sp for _, sp in W.turns(c)) if not has_photo(pj["people"].get(k))]
+    missing += [f"footer host {h.get('handle') or h.get('name')}" for h in (pj["episode"].get("hosts") or brand.get("hosts") or []) if not has_photo(h)]
+    if missing and not getattr(a, "allow_initials", False):   # never ship an initials badge: every speaker and footer host needs their real profile picture
+        log("NEED REAL PROFILE PICTURES (no initials badges): " + ", ".join(missing) + ". Confirm each person's X handle with the user,"
+            " then run: pfp --work DIR --key KEY --url PROFILE_IMAGE_URL --name NAME --handle @HANDLE"); return 4
     st, en, dur = W.clip_window(c); theme = a.theme or brand.get("default_theme", "dark")
     bd = os.path.join(a.work, "build", a.clip); os.makedirs(bd, exist_ok=True)
     mw = os.path.join(bd, "master.wav"); t = time.time()
@@ -270,7 +288,7 @@ def cmd_sample(a):
                                     "accent_words": ["conversation", "clip", "lands", "frame", "gold"], "drops": [], "fixes": [], "payoff_words": 0}}},
               open(os.path.join(work, "project.json"), "w"), indent=1)
     theme = a.theme or brand.get("default_theme", "dark")
-    base = dict(work=work, clip="sample", theme=theme, crf=12, jobs=6, remaster=False)
+    base = dict(work=work, clip="sample", theme=theme, crf=12, jobs=6, remaster=False, allow_initials=True)   # demo guest has no photo
     if cmd_make(argparse.Namespace(**base, dump="9.2")): log("SAMPLE FAILED: layout check failed, see above"); return 3
     still = os.path.join(work, "build", "sample", theme, "ref_009.20.png")
     os.makedirs(os.path.join(work, "out"), exist_ok=True); dst = os.path.join(work, "out", f"sample_{theme}_still.png"); shutil.copy(still, dst)
@@ -322,7 +340,7 @@ def cmd_space_preview(a):
     if a.cohost:
         ch = "@" + a.cohost.lstrip("@"); ck = ch[1:].lower(); cp = pj["people"].get(ck, {})
         cpfp = _save_pfp(work, ck, a.cohost_pfp) or (os.path.join(work, cp["img"]) if cp.get("img") else None)
-        if not cpfp: log(f"note: no picture for {ch}, the footer shows their initials. Pass --cohost-pfp to fix.")
+        if not cpfp: log(f"NEED THE CO-HOST'S PICTURE: pass --cohost-pfp FILE_OR_URL for {ch}. Never show initials."); return 2
         hosts.append({"name": a.cohost_name or cp.get("name") or ch[1:], "handle": ch, "img": os.path.abspath(cpfp) if cpfp else ""})
         pj["people"][ck] = {"name": hosts[-1]["name"], "handle": ch, "img": os.path.relpath(cpfp, work) if cpfp else ""}
     if a.brand: brand_p = os.path.abspath(a.brand)
@@ -346,8 +364,8 @@ def cmd_space_preview(a):
                                      "payoff": False, "phrase_words": [4, 12]}}}, open(os.path.join(pv, "project.json"), "w"), indent=1)
     brand = json.load(open(brand_p)); theme = a.theme or brand.get("default_theme", "dark")
     T = round(words[2]["s"] + 0.12, 2)   # "Your best" spoken, "moments" lit: the first few words read as highlighted
-    if cmd_make(argparse.Namespace(work=pv, clip="preview", theme=theme, crf=12, jobs=a.jobs, remaster=False, dump=str(T))):
-        log("PREVIEW FAILED: layout check failed, see above"); return 3
+    r = cmd_make(argparse.Namespace(work=pv, clip="preview", theme=theme, crf=12, jobs=a.jobs, remaster=False, dump=str(T)))
+    if r: log("PREVIEW FAILED: see above"); return r
     still = os.path.join(pv, "build", "preview", theme, f"ref_{T:06.2f}.png")
     dst = os.path.abspath(a.out) if a.out else os.path.join(work, "out", f"space_preview_{theme}.png")
     os.makedirs(os.path.dirname(dst), exist_ok=True); shutil.copy(still, dst)
