@@ -1,28 +1,11 @@
-"""Word level transcript with faster-whisper. Output shape:
-[{"start","end","text","words":[{"s","e","w"}]}]  (times in seconds of the SOURCE file)."""
-import json, os, subprocess, tempfile, time, wave
-import numpy as np
+"""Word level transcript via cloud ASR (Deepgram nova-3, AssemblyAI backup; see lib/cloud_asr.py). No local model.
+Output shape: [{"start","end","text","words":[{"s","e","w"}]}]  (times in seconds of the SOURCE file). Also writes
+.txt and .srt next to the JSON. Signature kept for audiogram.py (model/threads/chunk/batch_size are ignored)."""
+import json, os, tempfile, time
+from lib.cloud_asr import transcribe_file, compact
 
-def to_wav16k(src, out, start=None, end=None):
-    cmd = ["ffmpeg", "-v", "error", "-y"]
-    if start is not None: cmd += ["-ss", f"{start:.3f}"]
-    if end is not None: cmd += ["-t", f"{end - (start or 0):.3f}"]
-    subprocess.run(cmd + ["-i", src, "-ac", "1", "-ar", "16000", "-c:a", "pcm_s16le", out], check=True)
-    return out
-
-def transcribe(src, out_json, model="small.en", start=None, end=None, threads=None, log=print):
-    from faster_whisper import WhisperModel
-    tmp = tempfile.mktemp(suffix=".wav"); to_wav16k(src, tmp, start, end)
-    wf = wave.open(tmp); audio = np.frombuffer(wf.readframes(wf.getnframes()), dtype=np.int16).astype(np.float32) / 32768.0; os.remove(tmp)
-    m = WhisperModel(model, device="cpu", compute_type="int8", cpu_threads=threads or os.cpu_count() or 4)
-    off = start or 0.0; t = time.time()
-    segs, info = m.transcribe(audio, word_timestamps=True, vad_filter=True, beam_size=1 if model.startswith("small") else 5)
-    out = []
-    for s in segs:
-        out.append({"start": s.start + off, "end": s.end + off, "text": s.text.strip(),
-                    "words": [{"s": w.start + off, "e": w.end + off, "w": w.word} for w in s.words]})
-        log(f"  {s.end + off:7.1f}s")
-    json.dump(out, open(out_json, "w"))
+def write_all(out, out_json):
+    json.dump(out, open(out_json + ".tmp", "w")); os.replace(out_json + ".tmp", out_json)
     base = os.path.splitext(out_json)[0]
     with open(base + ".txt", "w") as f:
         for d in out: f.write(f"[{int(d['start']//60):02d}:{d['start']%60:05.2f}] {d['text']}\n")
@@ -31,5 +14,18 @@ def transcribe(src, out_json, model="small.en", start=None, end=None, threads=No
         return f"{h:02d}:{m_:02d}:{int(s_):02d},{int((s_%1)*1000):03d}"
     with open(base + ".srt", "w") as f:
         for i, d in enumerate(out, 1): f.write(f"{i}\n{ts(d['start'])} --> {ts(d['end'])}\n{d['text']}\n\n")
-    log(f"transcribed {len(out)} segments in {time.time()-t:.0f}s -> {out_json}")
+
+def transcribe(src, out_json, model=None, start=None, end=None, threads=None, log=print, chunk=None, batch_size=None, on_chunk=None):
+    t = time.time(); tmp = tempfile.mktemp(suffix=".ogg"); compact(src, tmp, start, end)
+    try: r = transcribe_file(tmp, log=log)
+    finally: os.remove(tmp)
+    off = start or 0.0
+    segs = r["segs"] or [dict(start=w["s"], end=w["e"], text=w["w"].strip(), words=[w]) for w in r["words"]]
+    out = [dict(start=round(s["start"] + off, 2), end=round(s["end"] + off, 2), text=s["text"],
+                words=[dict(s=round(w["s"] + off, 2), e=round(w["e"] + off, 2), w=w["w"]) for w in s["words"]]) for s in segs]
+    write_all(out, out_json); log(f"CHUNK READY all ({r['engine']})")
+    if on_chunk:
+        try: on_chunk()
+        except Exception as ex: log(f"note: speaker step failed ({ex})")
+    log(f"transcribed {len(out)} segments with {r['engine']} in {time.time()-t:.0f}s -> {out_json}")
     return out

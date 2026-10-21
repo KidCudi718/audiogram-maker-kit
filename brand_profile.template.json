@@ -1,57 +1,75 @@
 {
-  "_readme": "Brand profile for Audiogram Maker. One file per brand. Every color, logo, label and link in the video comes from here. Keys starting with _ are notes and are ignored. Paths are relative to this file.",
+  "_readme": "Brand profile for Audiogram Maker v1.2. One file per brand. Keys starting with _ are notes and are ignored. Paths are relative to this file. The values below ARE the approved default look; brand-from-url, brand-from-logo and the host-photo fallback only fill in brand_name, brand_mark, colors.accent, colors.primary and spelling.",
   "brand_name": "",
+  "brand_handle": "",
+  "brand_mark": "",
+  "_brand_mark": "A square-ish logo or the brand's X profile picture. It is the FIRST photo of the footer Hosts row, shown as given (never recolored). It must read on the dark style. Leave empty to start the row with the Space hosts.",
   "logo": {
-    "on_dark": "assets/logo-white.svg",
-    "on_light": "assets/logo-dark.svg",
+    "on_dark": "",
+    "on_light": "",
     "mark": "",
-    "style": "wordmark",
+    "style": "none",
+    "style_dark": "none",
+    "style_light": "none",
     "dark_mode": "original",
     "light_mode": "original",
-    "_note": "style: wordmark (logo alone) or icon (a square icon next to the brand name). dark_mode / light_mode: original (logo colors), white or dark (a clean one color version). SVG or transparent PNG. on_dark is used on the dark style, on_light on the light style. If only one is given it is used for both. mark is an optional icon-only version used as a faint 3 to 5 percent watermark (leave empty to skip). If there is no logo at all, the brand name is set as text."
+    "title_size": 42,
+    "_note": "style none (default): no logo in the top bar; the Space title is on the left and 'X Space \u00b7 date' on the right. wordmark / icon / text put a logo back in the top bar only if the user asks. Logos are never recolored: dark_mode / light_mode other than original are ignored. mark (background watermark) is off by default."
   },
   "colors": {
     "accent": "#00E0A0",
     "primary": "#0A5C45",
-    "background_dark": "#08281A",
-    "background_light": "#F8F8FB",
-    "_optional": "ring_dark (default #FFFFFF), ring_light (default primary), text_light, key_light, button (default accent), button_light",
-    "_note": "accent: the bright highlight (current word underline, progress bar, button, glow). Pick a vivid one. primary: the deeper brand color used for text accents in the light style. background_dark: the mid tone of the dark background (it is darkened toward the edges automatically). background_light: the light style page color."
+    "background_dark": "#0E0E10",
+    "background_light": "#DCDCDE",
+    "glow_dark": "#8A8A90",
+    "glow_light": "#FFFFFF",
+    "edge_dark": "#FFFFFF",
+    "edge_light": "#000000",
+    "_note": "accent: the brand colour, used ONLY for highlights (current word underline, accent words, progress bar). primary: a deeper brand colour for highlights in the light style. Backgrounds, glow and frame line stay neutral for every brand."
   },
   "default_theme": "dark",
   "font": {
     "family": "Inter",
     "file": "",
-    "_note": "Leave file empty to use Inter (installed with the kit). To use a brand font, point file at a .ttf/.otf/.woff2 the user has the right to use."
+    "_note": "Leave file empty to use Inter. A brand font must be a file the user has the right to use."
   },
-  "link": "example.com/listen",
+  "link": "",
   "promo_code": "",
   "footer": {
-    "cta_line": "Listen on Example",
+    "cta_line": "",
     "code_label": "Code:",
     "button_text": "",
     "hosts_label": "Hosts",
     "footer_text": "",
-    "_note": "cta_line is the small label before the link. The button shows '<code_label> <promo_code>' when a promo code is set, otherwise button_text, otherwise nothing. footer_text replaces the hosts row when there are no hosts."
+    "host_names": true,
+    "photo_size": 104,
+    "align": "center",
+    "_note": "The footer is a centered Hosts row: round photos with name and handle, brand mark first, then the Space hosts (filled by init from the Space). link / promo_code / button_text appear only if the user gives them. footer_text is only used when there are no hosts at all."
   },
-  "hosts": [
-    {"name": "Host Name", "handle": "@host", "img": "assets/host.jpg"}
-  ],
-  "spelling": ["ExampleBrand"],
+  "hosts": [],
+  "spelling": [],
   "captions": {
-    "size": "medium",
-    "weight": 600,
+    "size": 108,
+    "weight": 650,
     "highlight": "underline",
-    "phrase_words": [4, 8],
-    "_note": "size: small | medium | large (60, 68, 76 px) or a number. highlight: underline (current word white with an accent underline, the default), color (current word in the accent color) or both. phrase_words: min and max words per caption line. Captions are always sentence case, never all caps. spelling: brand and product names the transcript should always spell this way."
+    "phrase_words": [
+      4,
+      8
+    ],
+    "_note": "84 px, weight 650, sentence case (never all caps), at most 2 lines. highlight: underline (default), color or both."
+  },
+  "clip": {
+    "payoff": true,
+    "tail_pad_s": 0.4,
+    "_note": "payoff: the last sentence becomes the large centered payoff line (per clip override: clips.<id>.payoff). tail_pad_s: the end always sits this long after the last word. No intro, fade in or fade out, ever."
   },
   "format": {
     "aspect": "16:9",
-    "_note": "16:9 1920x1080 is the default for X. Vertical is not built into this kit yet."
+    "_note": "1920x1080 30 fps for X."
   },
-  "delivery": {
-    "destination": "chat",
-    "drive_folder_id": "",
-    "_note": "chat (send files in the conversation) or drive (upload to the user's connected Google Drive folder)."
+  "layout": {
+    "chipy": 290,
+    "capy": 392,
+    "capmaxh": 300
   }
 }

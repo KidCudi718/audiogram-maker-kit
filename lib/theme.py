@@ -44,15 +44,18 @@ def palette(brand, theme):
         ring = c.get("ring_dark", WHITE)
         und = cap.get("underline_color_dark", acc)
         btn = c.get("button", acc)
+        g = c.get("glow_dark", "#8A8A90")   # background glow: neutral by default (v1.2); never the brand colour unless asked
         T = dict(
             page=page, scene_bg=bg,
             base=f"radial-gradient(1400px 900px at 30% 45%,{bg} 0%,{mix(bg, BLACK, 0.4)} 42%,{page} 100%)",
-            floor=rgba(mix(acc, BLACK, 0.4), .10), dots="rgba(255,255,255,.045)", mark=WHITE, markop=".03",
-            b1=f"{rgba(mix(acc, BLACK, 0.33), .50)},{rgba(mix(acc, BLACK, 0.57), .20)}",
-            b2=rgba(mix(acc, BLACK, 0.12), .34), b3=rgba(mix(acc, BLACK, 0.5), .12), bfade=rgba(acc, 0),
-            halo=mix(bg, BLACK, 0.6), halo2=mix(bg, acc, 0.12),
+            floor=rgba(mix(g, BLACK, 0.4), .10), dots="rgba(255,255,255,.045)", mark=WHITE, markop=".014",
+            b1=f"{rgba(mix(g, BLACK, 0.33), .50)},{rgba(mix(g, BLACK, 0.57), .20)}",
+            b2=rgba(mix(g, BLACK, 0.12), .34), b3=rgba(mix(g, BLACK, 0.5), .12), bfade=rgba(g, 0),
+            halo=mix(bg, BLACK, 0.6), halo2=mix(bg, g, 0.12),
             rim=f"linear-gradient(160deg,#FFFFFF,{acc} 45%,{deep})", pshadow="0 30px 60px rgba(0,0,0,.60)",
-            edge=f"{rgba(acc, .85)},{rgba(mix(acc, BLACK, .12), .35)} 30%,rgba(255,255,255,.06) 55%,{rgba(mix(acc, BLACK, .12), .35)} 80%,{rgba(acc, .85)}",
+            edge=("rgba(232,232,236,.55),rgba(150,150,158,.18) 22%,rgba(255,255,255,.06) 45%,rgba(196,196,204,.40) 62%,rgba(120,120,128,.14) 80%,rgba(232,232,236,.50)"
+                  if c.get("edge_dark", "#FFFFFF") else   # neutral frame line by default (v1.2); "" brings back the accent edge
+                  f"{rgba(acc, .85)},{rgba(mix(acc, BLACK, .12), .35)} 30%,rgba(255,255,255,.06) 55%,{rgba(mix(acc, BLACK, .12), .35)} 80%,{rgba(acc, .85)}"),
             ink=WHITE, ink2=mix(WHITE, bg, 0.07), mute=mix(WHITE, bg, 0.35), lbl=mix(WHITE, bg, 0.42), rule=mix(bg, WHITE, 0.12),
             dot=acc, pillbg=f"linear-gradient(180deg,{mix(bg, WHITE, 0.05)},{mix(bg, WHITE, 0.02)})", pillbd=mix(bg, acc, 0.28),
             pillsh=f"inset 0 1px 0 {mix(bg, acc, 0.3)},0 14px 30px rgba(0,0,0,.55)",
@@ -71,21 +74,25 @@ def palette(brand, theme):
         key = c.get("key_light", prim if contrast(prim, bg) >= 4.5 else mix(prim, BLACK, 0.45))
         und = cap.get("underline_color_light", key)
         btn = c.get("button_light", c.get("button", acc))
+        g = c.get("glow_light", "#FFFFFF")   # background tint and glow: neutral by default (v1.2)
         T = dict(
             page=bg, scene_bg=bg,
-            base=f"linear-gradient(125deg,{bg} 0%,{mix(bg, acc, 0.03)} 38%,{mix(bg, acc, 0.08)} 72%,{mix(bg, acc, 0.14)} 100%)",
-            floor=rgba(acc, .10), dots=rgba(ink, .085), mark=key, markop=".035",
-            b1=f"{rgba(acc, .30)},{rgba(acc, .10)}", b2=rgba(mix(acc, WHITE, 0.2), .24), b3=rgba(acc, .12), bfade=rgba(acc, 0),
+            base=f"linear-gradient(125deg,{bg} 0%,{mix(bg, g, 0.03)} 38%,{mix(bg, g, 0.08)} 72%,{mix(bg, g, 0.14)} 100%)",
+            floor=rgba(g, .10), dots=rgba(ink, .085), mark=ink, markop=".012",
+            b1=f"{rgba(g, .30)},{rgba(g, .10)}", b2=rgba(mix(g, WHITE, 0.2), .24), b3=rgba(g, .12), bfade=rgba(g, 0),
             halo=bg, halo2=rgba(ink, .08),
             rim=f"linear-gradient(160deg,{mix(acc, WHITE, 0.45)},{acc} 45%,{key})",
             pshadow=f"0 36px 64px {rgba(ink, .26)},0 10px 22px {rgba(ink, .12)}",
-            edge=f"{rgba(key, .70)},{rgba(acc, .28)} 30%,{rgba(ink, .05)} 55%,{rgba(acc, .28)} 80%,{rgba(key, .65)}",
+            edge=(f"{rgba(c.get('edge_light') or '#000000', .22)},{rgba(c.get('edge_light') or '#000000', .08)} 30%,{rgba(ink, .04)} 55%,"
+                  f"{rgba(c.get('edge_light') or '#000000', .08)} 80%,{rgba(c.get('edge_light') or '#000000', .22)}"
+                  if c.get("edge_light", "#000000") else   # neutral frame line by default (v1.2)
+                  f"{rgba(key, .70)},{rgba(acc, .28)} 30%,{rgba(ink, .05)} 55%,{rgba(acc, .28)} 80%,{rgba(key, .65)}"),
             ink=ink, ink2=rgba(ink, .85), mute=rgba(ink, .58), lbl=rgba(ink, .48), rule=rgba(ink, .10),
             dot=key, pillbg="linear-gradient(180deg,#FFFFFF,#FBFBFC)", pillbd=rgba(ink, .12),
             pillsh=f"0 18px 40px {rgba(ink, .12)}",
             hosthalo="#FFFFFF", hostring=key, chipbg="#FFFFFF", chipbd=rgba(ink, .14),
-            u=mix(ink, bg, 0.68), s=ink, c=ink, und=und, key=key, ku=mix(key, bg, 0.55),
-            nx=mix(ink, bg, 0.78), hu=mix(ink, bg, 0.58),
+            u=mix(ink, bg, 0.52), s=ink, c=ink, und=und, key=key, ku=mix(key, bg, 0.45),
+            nx=mix(ink, bg, 0.68), hu=mix(ink, bg, 0.52),
             btn_top=mix(btn, WHITE, 0.15), btn=btn, btn_ink=on(btn), btn_line=mix(btn, WHITE, 0.5),
             codesh=f"0 8px 22px {rgba(btn, .30)}",
             logo=brand["logo"].get("on_light") or brand["logo"].get("on_dark"),

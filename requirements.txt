@@ -3,3 +3,5 @@ pillow>=10.0
 faster-whisper>=1.0
 yt-dlp>=2025.1.1
 beautifulsoup4>=4.12
+requests>=2.31
+soundfile>=0.12
